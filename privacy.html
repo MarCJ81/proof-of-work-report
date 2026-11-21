@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>개인정보 처리 안내 · 작업 증빙 리포트</title>
+<meta name="description" content="작업 증빙 리포트가 입력한 내용을 어떻게 다루는지: 서버 없음, 공유 링크 구조, 로컬 저장, Pro API 연결 시 전송 범위." />
+<meta name="theme-color" content="#FAFAFA" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="doc-body">
+<main class="doc">
+  <p class="kicker">PRIVACY · 2026-11-21</p>
+  <h1>개인정보 처리 안내</h1>
+  <p class="doc-lead">이 앱은 회원가입도, 서버도, 분석 도구도 쓰지 않습니다. 입력한 내용이 어디로 가고 어디에 남는지만 정확히 적었습니다.</p>
+
+  <section>
+    <h2>1. 서버로 보내지 않습니다</h2>
+    <p>리포트 작성, 공유 링크 생성, A4 인쇄는 모두 이 브라우저 안에서 끝납니다. 완성된 리포트를 저장하는 데이터베이스가 없고, 운영자가 내용을 볼 수 있는 경로도 없습니다.</p>
+    <p>유일한 예외는 <strong>AI 브리지의 Pro API 연결</strong>입니다. 직접 키를 넣고 연결했을 때만, 그때 만든 프롬프트가 <em>사용자가 고른 제공자(OpenAI·Gemini·Claude 또는 본인 서버)</em>에게 브라우저에서 직접 전송됩니다. 이 앱의 서버를 거치지 않습니다.</p>
+  </section>
+
+  <section>
+    <h2>2. 공유 링크에는 내용이 담깁니다</h2>
+    <p>공유 링크는 <code>?d=</code> 뒤에 리포트 내용을 압축해 넣은 주소입니다. 서버에 저장하는 대신 내용 자체를 링크에 담기 때문에, 로그인 없이 열립니다.</p>
+    <ul>
+      <li><strong>링크를 아는 사람은 누구나</strong> 내용을 볼 수 있습니다. 비밀번호가 없습니다.</li>
+      <li>링크를 메신저·메일에 붙이면 그 서비스에도 주소가 남습니다.</li>
+      <li>그래서 작성 화면에 <strong>개인정보 점검</strong>이 있습니다. 전화번호·이메일·주민번호·계좌 형태 숫자가 보이면 공유 전에 알려 줍니다. 자동 감지는 완벽하지 않으니 마지막 확인은 직접 해 주세요.</li>
+      <li>브랜드 정보에 넣은 담당자 이름·연락처는 리포트에 표시하려고 넣은 값입니다. 받는 사람에게 보여도 되는 것만 넣으세요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>3. 이 브라우저에 남는 것</h2>
+    <ul>
+      <li><strong>초안</strong> — 작성 중인 리포트 1건. 입력할 때마다 자동 저장됩니다.</li>
+      <li><strong>이력</strong> — 최근 리포트 20건(브라우저 저장 공간이 허락하는 범위).</li>
+      <li><strong>브랜드 설정</strong> — 로고 텍스트·컬러·서명란.</li>
+    </ul>
+    <p>모두 <code>localStorage</code>에만 있고, 다른 기기와 동기화되지 않습니다. 지우려면 브라우저 설정에서 이 사이트의 데이터를 삭제하거나, 이력 탭에서 리포트를 지우면 됩니다. 인터넷이 끊겨도 작성과 인쇄는 됩니다.</p>
+  </section>
+
+  <section>
+    <h2>4. Pro API 연결</h2>
+    <ul>
+      <li>키는 기본적으로 <code>sessionStorage</code>에만 두고, 탭을 닫으면 사라집니다. “기억하기”를 직접 켠 경우에만 브라우저에 남습니다.</li>
+      <li>키는 화면에 마스킹해서 보여 주고, 공유 링크·이력·JSON 파일에는 절대 들어가지 않습니다.</li>
+      <li>전송되는 것은 프롬프트(프로젝트명·기간·항목·메모·근거 링크)입니다. 브랜드 연락처는 프롬프트에 넣지 않습니다.</li>
+      <li>제공자의 보관 정책은 그 회사의 정책을 따릅니다. 민감한 내용은 연결 전에 빼 주세요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>5. 수집하지 않는 것</h2>
+    <p>쿠키, 광고 식별자, 방문 통계, 위치, 기기 정보, 계정 정보 — 아무것도 수집하지 않습니다. 외부 CDN·폰트·스크립트도 불러오지 않습니다. 모든 파일은 이 사이트 안에 있습니다.</p>
+  </section>
+
+  <section>
+    <h2>6. 인쇄와 PDF</h2>
+    <p>A4 PDF는 브라우저의 인쇄 기능으로 만들어집니다. 파일은 사용자의 기기에 저장되고 어디로도 전송되지 않습니다.</p>
+  </section>
+
+  <section>
+    <h2>7. 이 페이지에 대하여</h2>
+    <p>이 앱은 예시 데이터(김민수 · 주식회사 온빛 · contact@example.com)로 동작하는 데모입니다. 실제 개인정보를 수집·보관하지 않으며, 문의 창구도 두지 않습니다. 배포하는 사람이 있다면 그 사람이 이 내용을 자기 서비스에 맞게 고쳐야 합니다.</p>
+  </section>
+
+  <p class="doc-back"><a class="text-link" href="index.html">← 작업 증빙 리포트로 돌아가기</a></p>
+</main>
+</body>
+</html>

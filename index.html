@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; form-action 'none'; base-uri 'none'; object-src 'none'" />
+<title>작업 증빙 리포트 — 클라이언트에게 보여 줄 1분 리포트</title>
+<meta name="description" content="프리랜서·1인 대행사를 위한 작업 증빙 리포트 생성기. 완료 항목·소요시간·근거 링크·다음 주 계획을 공유 URL과 A4 PDF로 정리합니다. 서버 없이 브라우저에서만 동작합니다." />
+<meta name="theme-color" content="#FAFAFA" />
+<link rel="canonical" href="https://marcj81.github.io/proof-of-work-report/" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="preload" href="assets/fonts/plexkr-Regular.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="stylesheet" href="styles.css" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"작업 증빙 리포트 스튜디오","applicationCategory":"BusinessApplication","operatingSystem":"Web","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"},"description":"완료 항목·소요시간·근거 링크·전주 대비 변화를 공유 URL과 A4 PDF로 정리하는 무서버 리포트 도구.","inLanguage":"ko"}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main">본문으로 바로가기</a>
+
+<!-- ═══════════════ 클라이언트용 읽기 뷰 (?d= 로 열렸을 때만) ═══════════════ -->
+<div class="read-shell" id="read-shell" hidden>
+  <div class="read-bar">
+    <div class="read-bar-inner">
+      <span class="read-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="read-bar-label">작업 증빙 리포트</span>
+      <div class="read-bar-actions">
+        <button type="button" class="btn btn-outline btn-sm" id="read-import">내 리포트로 가져오기</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="read-copy">링크 복사</button>
+        <button type="button" class="btn btn-primary btn-sm" id="read-print">A4 PDF로 저장</button>
+      </div>
+    </div>
+  </div>
+  <main class="read-main" id="read-main">
+    <div class="read-error" id="read-error" hidden>
+      <h1>리포트를 열 수 없습니다</h1>
+      <p id="read-error-text">주소가 잘렸거나 오래된 링크입니다.</p>
+      <p><a class="text-link" href="index.html">작업 증빙 리포트 만들기</a></p>
+    </div>
+    <div id="read-report" class="report-paper"></div>
+  </main>
+  <footer class="read-footer">
+    <p><strong>이 리포트는 서버에 저장되지 않았습니다.</strong> 내용은 링크 안에만 담겨 있고, 브라우저가 직접 그립니다.</p>
+    <p>링크를 아는 사람은 누구나 볼 수 있습니다. 민감한 정보는 빼고 공유하세요.</p>
+  </footer>
+</div>
+
+<!-- ═══════════════ 빌더 ═══════════════ -->
+<div class="app-shell" id="app-shell">
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#view-write" data-tab-link="write" aria-label="작업 증빙 리포트 스튜디오 홈">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path d="M4.5 12.5l4.6 4.6L19.5 6.7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M4.5 19.2h15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".5" />
+        </svg>
+      </span>
+      <span class="brand-text">
+        <strong>작업 증빙 리포트</strong>
+        <small>PROOF OF WORK</small>
+      </span>
+    </a>
+
+    <nav class="tabs" role="tablist" aria-label="주요 화면">
+      <button class="tab is-active" role="tab" aria-selected="true" aria-controls="view-write" id="tab-write" data-tab="write">작성</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-client" id="tab-client" data-tab="client">클라이언트 뷰</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-history" id="tab-history" data-tab="history">이력</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-bridge" id="tab-bridge" data-tab="bridge">AI 브리지</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-brand" id="tab-brand" data-tab="brand">브랜드</button>
+    </nav>
+
+    <div class="top-actions">
+      <span class="pro-badge-slot" id="proBadge"></span>
+      <span class="save-state" id="save-state" aria-live="polite">저장됨</span>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-print">A4 PDF</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-share">공유 링크</button>
+    </div>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+  <!-- ═══ 작성 ═══ -->
+  <section class="view is-active" id="view-write" role="tabpanel" aria-labelledby="tab-write">
+
+    <div class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow"><b>VOL.01</b> 무료 · 서버 0 · 가입 0</span>
+        <h1>“이번 달 뭐 했어요?”에<br />스크린샷 대신 <em>증빙 리포트</em> 1분.</h1>
+        <p class="hero-lead">완료한 일, 걸린 시간, 근거 링크, 다음 주 계획을 한 장으로 정리합니다. 클라이언트는 로그인 없이 링크로 읽고, 필요하면 A4 PDF로 저장합니다.</p>
+        <div class="cta">
+          <button type="button" class="btn btn-blue" data-demo-start>예시 리포트 보기 →</button>
+          <button type="button" class="btn btn-outline" data-share-cta>공유 링크 만들기</button>
+        </div>
+        <ul class="hero-facts" aria-label="이 앱의 기준">
+          <li><strong>3단 증빙</strong><span>항목 · 소요시간 · 근거 링크</span></li>
+          <li><strong>전주 대비</strong><span>늘었는지 줄었는지 숫자로</span></li>
+          <li><strong>서버 전송 0건</strong><span>링크 안에만 담깁니다</span></li>
+        </ul>
+      </div>
+
+      <aside class="card hero-ledger" aria-label="이 리포트의 증빙 요약">
+        <div class="card-head">
+          <span class="kicker">이 리포트의 증빙</span>
+          <span class="live" style="margin-left:auto"><i></i>자동 집계</span>
+        </div>
+        <div class="ledger">
+          <div class="ledger-cell"><b id="sum-done">0</b><span>완료</span></div>
+          <div class="ledger-cell"><b id="sum-hours">0h</b><span>소요시간</span></div>
+          <div class="ledger-cell"><b id="sum-links">0</b><span>근거 링크</span></div>
+          <div class="ledger-cell"><b id="sum-coverage">0%</b><span>증빙률</span></div>
+        </div>
+        <p class="delta is-none" id="sum-delta">첫 리포트</p>
+        <div class="cats" id="sum-cats" aria-label="작업 분류"></div>
+        <p class="rail-note">숫자는 입력에서만 나옵니다. 링크를 붙이고 시간을 적을수록 증빙이 강해집니다.</p>
+      </aside>
+    </div>
+
+    <section class="preset-strip" aria-labelledby="preset-title">
+      <div class="preset-head">
+        <h2 id="preset-title">업종 프리셋 3종</h2>
+        <p>누르면 예시 리포트가 채워집니다. 그대로 공유 링크를 만들어 볼 수 있습니다.</p>
+      </div>
+      <div class="preset-grid" id="preset-grid">
+        <button type="button" class="preset-card" data-preset="marketing">
+          <span class="preset-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 20l4-1 9-9-3-3-9 9-1 4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14.5 5.5l3 3" stroke="currentColor" stroke-width="1.6"/></svg>
+          </span>
+          <span class="preset-body"><b>마케팅·블로그 대행</b><small>원고 12편 · 카드뉴스 · 순위</small></span>
+          <span class="preset-go" aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="preset-card" data-preset="dev">
+          <span class="preset-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M9 7l-5 5 5 5M15 7l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="preset-body"><b>웹·앱 개발</b><small>API · 화면 · QA · 배포</small></span>
+          <span class="preset-go" aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="preset-card" data-preset="design">
+          <span class="preset-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="9.5" r="1.2" fill="currentColor"/><circle cx="15" cy="9.5" r="1.2" fill="currentColor"/><circle cx="12" cy="15" r="1.2" fill="currentColor"/></svg>
+          </span>
+          <span class="preset-body"><b>디자인·브랜딩</b><small>로고 · 가이드 · 인쇄물</small></span>
+          <span class="preset-go" aria-hidden="true">→</span>
+        </button>
+      </div>
+    </section>
+
+    <div class="studio-head" id="studio">
+      <div>
+        <h2>리포트 작성</h2>
+        <p>입력하는 대로 왼쪽 장부와 클라이언트 뷰가 바로 바뀝니다.</p>
+      </div>
+      <div class="filters" aria-label="항목 그룹으로 이동">
+        <a class="filter on" href="#studio">전체</a>
+        <a class="filter" href="#group-done">완료</a>
+        <a class="filter" href="#group-doing">진행</a>
+        <a class="filter" href="#group-next">다음 주</a>
+        <a class="filter" href="#group-block">확인 필요</a>
+      </div>
+    </div>
+
+    <div class="studio">
+      <div class="studio-main">
+
+        <section class="card" aria-labelledby="meta-title">
+          <div class="card-head">
+            <h2 id="meta-title"><span class="idx">01</span> 기본 정보</h2>
+            <button type="button" class="link-btn" id="btn-sample">예시 리포트 불러오기</button>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="f-project">프로젝트명 <span class="req">필수</span></label>
+              <input id="f-project" type="text" maxlength="100" placeholder="예: 온빛 브랜드 블로그 월간 운영" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="f-client">클라이언트</label>
+              <input id="f-client" type="text" maxlength="80" placeholder="예: 주식회사 온빛" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="f-start">보고 기간 시작</label>
+              <input id="f-start" type="date" />
+            </div>
+            <div class="field">
+              <label for="f-end">보고 기간 끝</label>
+              <input id="f-end" type="date" />
+            </div>
+            <div class="field field-wide">
+              <label for="f-summary">한 줄 요약 <span class="hint">클라이언트가 제일 먼저 읽는 문장</span></label>
+              <textarea id="f-summary" rows="3" maxlength="800" placeholder="이번 기간에 무엇을 끝냈고, 다음에 무엇이 남았는지 2~3문장으로."></textarea>
+              <div class="field-foot">
+                <span class="counter" id="summary-count">0 / 800</span>
+                <span class="field-tools">
+                  <button type="button" class="link-btn" id="btn-auto-summary">집계로 자동 작성</button>
+                  <button type="button" class="link-btn" id="btn-to-bridge">AI로 다듬기 →</button>
+                </span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="f-prev">지난 기간 총 소요시간 <span class="hint">선택</span></label>
+              <div class="input-unit">
+                <input id="f-prev" type="number" min="0" max="9999" step="0.5" placeholder="예: 42" />
+                <span>h</span>
+              </div>
+              <p class="field-note">넣으면 “전주 대비 +18%”처럼 변화를 같이 보여 줍니다.</p>
+            </div>
+            <div class="field">
+              <label for="f-period-view">기간 표시</label>
+              <p class="readonly-value" id="f-period-view">기간을 넣으면 일수까지 계산합니다</p>
+            </div>
+          </div>
+        </section>
+
+        <div id="item-groups"></div>
+
+        <section class="card tip-card" aria-labelledby="tip-title">
+          <div class="card-head">
+            <h2 id="tip-title">증빙이 강해지는 순서</h2>
+            <span class="tag" style="margin-left:auto">4단계</span>
+          </div>
+          <ol class="tip-list">
+            <li><b>항목은 결과로 씁니다.</b> “블로그 작업” 대신 “원고 12편 작성·교정”.</li>
+            <li><b>시간을 적습니다.</b> 근거가 없을 때 소요시간이 유일한 증거가 됩니다.</li>
+            <li><b>링크를 붙입니다.</b> GitHub PR, Figma 파일, 노션 페이지, 구글 시트 — 클라이언트가 눌러 확인하는 한 번이 설득입니다.</li>
+            <li><b>블로커는 요청 문장으로.</b> “사진이 없어서 못 했습니다”보다 “2일까지 사진 3종을 주시면 일정에 영향이 없습니다”.</li>
+          </ol>
+        </section>
+      </div>
+
+      <aside class="rail" aria-label="공유 준비">
+        <section class="card rail-check" aria-labelledby="check-title">
+          <h2 id="check-title">공유 전 점검 <span class="pill" id="check-count">0</span></h2>
+          <ul class="check-list" id="check-list"></ul>
+          <div class="rail-actions">
+            <button type="button" class="btn btn-primary btn-block" id="btn-share-rail">공유 링크 만들기</button>
+            <button type="button" class="btn btn-outline btn-block" id="btn-print-rail">A4 PDF로 인쇄</button>
+            <button type="button" class="btn btn-ghost btn-block" id="btn-copy-text">텍스트로 복사</button>
+          </div>
+          <p class="rail-note">링크에는 입력한 내용이 담깁니다. 서버에는 아무것도 저장되지 않습니다.</p>
+        </section>
+
+        <nav class="card rail-nav" aria-label="바로 가기">
+          <h2>바로 가기</h2>
+          <button type="button" class="rail-link" data-tab-link="client">
+            <span class="rl-t">클라이언트 뷰</span>
+            <span class="rl-d">받는 사람이 보는 그대로</span>
+            <span class="rl-go" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="rail-link" data-tab-link="bridge">
+            <span class="rl-t">AI 브리지</span>
+            <span class="rl-d">거친 메모를 문장으로</span>
+            <span class="rl-go" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="rail-link" data-tab-link="brand">
+            <span class="rl-t">브랜드·서명</span>
+            <span class="rl-d">PDF 머리말과 서명란</span>
+            <span class="rl-go" aria-hidden="true">→</span>
+          </button>
+        </nav>
+
+        <section class="card rail-privacy" id="privacy-card" hidden aria-labelledby="privacy-title">
+          <h2 id="privacy-title">개인정보가 보입니다</h2>
+          <ul class="privacy-list" id="privacy-list"></ul>
+          <p class="rail-note">링크를 아는 사람은 누구나 열람합니다. 공유 전에 지우는 게 안전합니다.</p>
+        </section>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ═══ 클라이언트 뷰 ═══ -->
+  <section class="view" id="view-client" role="tabpanel" aria-labelledby="tab-client">
+    <div class="view-head">
+      <div>
+        <p class="kicker">받는 사람이 보는 화면</p>
+        <h2>클라이언트 뷰</h2>
+        <p class="view-lead">공유 링크를 열면 이 화면이 그대로 나옵니다. 로그인도, 앱 설치도 필요 없습니다.</p>
+      </div>
+      <div class="view-tools">
+        <button type="button" class="btn btn-outline btn-sm" id="btn-client-share">이 화면의 링크 복사</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-client-print">A4 PDF</button>
+      </div>
+    </div>
+    <div class="report-paper" id="report-preview"></div>
+  </section>
+
+  <!-- ═══ 이력 ═══ -->
+  <section class="view" id="view-history" role="tabpanel" aria-labelledby="tab-history">
+    <div class="view-head">
+      <div>
+        <p class="kicker">이 브라우저에만 저장</p>
+        <h2>프로젝트 이력</h2>
+        <p class="view-lead">작성하는 동안 자동으로 저장됩니다. 다음 달에는 지난 리포트를 불러와 기간만 바꾸면 됩니다.</p>
+      </div>
+      <div class="view-tools">
+        <button type="button" class="btn btn-outline btn-sm" id="btn-new">새 리포트</button>
+        <button type="button" class="btn btn-outline btn-sm" id="btn-export-json">JSON 내려받기</button>
+        <label class="btn btn-outline btn-sm file-btn" for="import-json">JSON 불러오기</label>
+        <input type="file" id="import-json" accept="application/json,.json" hidden />
+      </div>
+    </div>
+    <div class="history-list" id="history-list"></div>
+    <p class="empty-note" id="history-empty">아직 저장된 리포트가 없습니다. 작성 탭에서 프리셋을 눌러 시작해 보세요.</p>
+  </section>
+
+  <!-- ═══ AI 브리지 ═══ -->
+  <section class="view" id="view-bridge" role="tabpanel" aria-labelledby="tab-bridge">
+    <div class="view-head">
+      <div>
+        <p class="kicker">거친 메모 → 클라이언트용 문장</p>
+        <h2>AI 브리지</h2>
+        <p class="view-lead">작성 탭의 항목·시간·링크를 프롬프트로 묶어 줍니다. 내가 쓰는 AI(ChatGPT·Claude·Gemini)에 붙여 넣으면 클라이언트가 읽는 문장으로 돌아옵니다.</p>
+      </div>
+      <div class="view-tools">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-pro-polish" data-pro-action="polish">Pro AI로 다듬기</button>
+      </div>
+    </div>
+
+    <div class="bridge-grid">
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="idx">01</span> 거친 메모</h2>
+          <span class="hint">지금 리포트 항목도 프롬프트에 함께 들어갑니다</span>
+        </div>
+        <textarea id="f-memo" rows="6" placeholder="예: 이번주 블로그 12개 썼고 카드뉴스 4개 올림. 제품사진 없어서 3개는 못씀."></textarea>
+        <div class="memo-samples" id="memo-samples"></div>
+        <div class="tone-row" role="group" aria-label="문장 톤">
+          <span class="row-label">톤</span>
+          <div class="chips" id="tone-chips"></div>
+        </div>
+        <div class="field-foot">
+          <span class="field-note">숫자는 리포트에 있는 것만 쓰도록 프롬프트에 못 박습니다.</span>
+          <button type="button" class="link-btn" id="btn-build-prompt">프롬프트 다시 만들기</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="idx">02</span> 프롬프트</h2>
+          <span class="pill" id="prompt-chars">0자</span>
+        </div>
+        <pre class="prompt-box" id="prompt-box" tabindex="0" aria-label="복사할 프롬프트"></pre>
+        <div class="bridge-actions">
+          <button type="button" class="btn btn-primary" id="btn-copy-prompt">프롬프트 복사</button>
+          <button type="button" class="btn btn-outline" data-open="chatgpt">ChatGPT 열기</button>
+          <button type="button" class="btn btn-outline" data-open="claude">Claude 열기</button>
+          <button type="button" class="btn btn-outline" data-open="gemini">Gemini 열기</button>
+        </div>
+        <p class="field-note" id="open-note">Gemini는 프롬프트를 주소로 넘기지 않습니다. 복사한 뒤 붙여 넣으세요.</p>
+      </section>
+
+      <section class="card bridge-result">
+        <div class="card-head">
+          <h2><span class="idx">03</span> 돌아온 문장 붙여넣기</h2>
+          <span class="pill" id="result-state">대기</span>
+        </div>
+        <textarea id="f-result" rows="7" placeholder="AI가 준 JSON(또는 문장)을 그대로 붙여 넣으세요. 제목이 맞는 항목에 메모가 들어갑니다."></textarea>
+        <div class="bridge-actions">
+          <button type="button" class="btn btn-primary" id="btn-apply-result">리포트에 반영</button>
+          <button type="button" class="btn btn-ghost" id="btn-clear-result">지우기</button>
+        </div>
+        <p class="field-note" id="apply-note">반영 전에 미리보기로 확인하세요. 제목이 같은 항목의 메모만 바꿉니다.</p>
+      </section>
+    </div>
+  </section>
+
+  <!-- ═══ 브랜드 ═══ -->
+  <section class="view" id="view-brand" role="tabpanel" aria-labelledby="tab-brand">
+    <div class="view-head">
+      <div>
+        <p class="kicker">PDF · 공유 링크에 함께 나갑니다</p>
+        <h2>브랜드와 서명</h2>
+        <p class="view-lead">로고 텍스트와 브랜드 컬러, 담당자 서명란을 정합니다. 리포트 상단과 하단에 그대로 들어갑니다.</p>
+      </div>
+      <div class="view-tools">
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-brand-reset">기본값으로</button>
+      </div>
+    </div>
+
+    <div class="brand-grid">
+      <section class="card">
+        <div class="card-head"><h2>브랜드</h2><span class="hint">가명으로 미리 채워져 있습니다</span></div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="b-logo">로고 텍스트</label>
+            <input id="b-logo" type="text" maxlength="40" placeholder="예: 온빛기획" />
+          </div>
+          <div class="field">
+            <label for="b-company">회사·활동명</label>
+            <input id="b-company" type="text" maxlength="60" placeholder="예: 온빛기획" />
+          </div>
+          <div class="field">
+            <label for="b-owner">담당자</label>
+            <input id="b-owner" type="text" maxlength="40" placeholder="예: 김민수" />
+          </div>
+          <div class="field">
+            <label for="b-role">직함</label>
+            <input id="b-role" type="text" maxlength="40" placeholder="예: 퍼포먼스 마케터" />
+          </div>
+          <div class="field">
+            <label for="b-email">연락 이메일 <span class="hint">선택</span></label>
+            <input id="b-email" type="email" maxlength="80" placeholder="contact@example.com" />
+          </div>
+          <div class="field">
+            <label for="b-phone">연락처 <span class="hint">선택 · 비워 두면 표시 안 함</span></label>
+            <input id="b-phone" type="tel" maxlength="30" placeholder="비워 두기" />
+          </div>
+          <div class="field field-wide">
+            <label>브랜드 컬러</label>
+            <div class="color-row">
+              <input id="b-color" type="color" value="#2f5bff" aria-label="브랜드 컬러 직접 선택" />
+              <div class="swatches" id="color-swatches"></div>
+              <span class="color-code" id="color-code">#2f5bff</span>
+            </div>
+            <p class="field-note">리포트의 번호·구분선·요약 숫자에 쓰입니다. 인쇄에서도 같은 색으로 나옵니다.</p>
+          </div>
+        </div>
+
+        <div class="card-head sub-head"><h2>서명란</h2></div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="s-name">서명 이름</label>
+            <input id="s-name" type="text" maxlength="40" placeholder="예: 김민수" />
+          </div>
+          <div class="field">
+            <label for="s-role">서명 직함</label>
+            <input id="s-role" type="text" maxlength="40" placeholder="예: 퍼포먼스 마케터" />
+          </div>
+          <div class="field">
+            <label for="s-date">작성일</label>
+            <input id="s-date" type="date" />
+          </div>
+        </div>
+      </section>
+
+      <aside class="card brand-preview-card">
+        <p class="kicker">미리보기</p>
+        <div class="brand-preview" id="brand-preview"></div>
+        <div class="field-foot">
+          <span class="field-note">실제 리포트의 머리말·서명란과 같은 모양입니다.</span>
+          <button type="button" class="link-btn" id="btn-goto-preview">전체 미리보기 →</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <strong>작업 증빙 리포트</strong>
+      <p>무료 · 회원가입 없음 · 빌드 없음. 입력한 내용은 이 브라우저에서만 처리되고, 공유 링크에는 내용이 압축되어 담깁니다.</p>
+    </div>
+    <nav class="footer-links" aria-label="안내">
+      <a href="privacy.html" id="footer-privacy">개인정보 처리 안내</a>
+      <a href="index.html">앱 처음으로</a>
+    </nav>
+  </div>
+</footer>
+</div>
+
+<!-- 인쇄 전용: 화면 어디서 Ctrl+P 를 눌러도 리포트만 A4로 나간다 -->
+<div id="print-root" aria-hidden="true"></div>
+
+<!-- 공유 모달 -->
+<div class="modal" id="share-modal" hidden>
+  <div class="modal-backdrop" data-close-modal="1"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="share-title">
+    <h2 id="share-title">공유 링크가 만들어졌습니다</h2>
+    <p class="modal-lead">로그인 없이 열리는 클라이언트용 읽기 뷰입니다. 링크를 아는 사람은 누구나 볼 수 있습니다.</p>
+    <div class="share-row">
+      <input id="share-url" type="text" readonly aria-label="공유 링크" />
+      <button type="button" class="btn btn-primary" id="btn-copy-share">복사</button>
+    </div>
+    <div class="share-meta">
+      <span id="share-size">0자</span>
+      <span id="share-warn" class="warn-text" hidden>링크가 깁니다. 항목을 줄이거나 메모를 짧게 해 주세요.</span>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-outline" id="btn-open-share">새 탭에서 열기</button>
+      <button type="button" class="btn btn-ghost" id="btn-share-close">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-root" id="toast-root" aria-live="polite" aria-atomic="false"></div>
+
+<script src="core.js"></script>
+<script src="data.js"></script>
+<script src="engines/pro-api-connector.js"></script>
+<script src="engines/pro-studio.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
