@@ -26,6 +26,7 @@
   var VERSION = '1.0.0';
   var PAYLOAD_VERSION = 1;
   var MARKER = 'pwr';           /* 남의 base64 를 리포트로 오해하지 않게 하는 표식 */
+  var COMPRESS_PREFIX = 'z1';   /* DEFLATE 압축 코드 표식(z1 + base64url). 기존 코드는 'eyJ…'로 시작한다 */
   var MAX_CODE = 8000;          /* 이 길이를 넘으면 링크가 잘릴 수 있다 */
   var WARN_CODE = 6000;
   var MAX_ITEMS = 60;
@@ -379,6 +380,70 @@
     return b64encode(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
 
+  /** 이미 UTF-8 바이트인 문자열(바이너리 문자열)을 그대로 base64url 로 — 재인코딩 금지 */
+  function binToBase64Url(bin) {
+    var b64;
+    if (typeof btoa === 'function') b64 = btoa(bin);
+    else if (typeof Buffer !== 'undefined') b64 = Buffer.from(bin, 'binary').toString('base64');
+    else throw new Error('no base64');
+    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  /* ── DEFLATE 압축 (nodeca/pako, MIT) ────────────────────
+     ?d= 공유 코드를 압축해 메신저에서 잘리는 길이를 줄인다.
+     pako 가 없으면 압축 없이 예전 방식으로 내보낸다(조용한 실패 금지). */
+  function pakoLib() {
+    try {
+      if (root && root.pako && typeof root.pako.deflateRaw === 'function') return root.pako;
+    } catch (e) { /* 아래 전역 확인 */ }
+    try {
+      if (typeof pako !== 'undefined' && pako && typeof pako.deflateRaw === 'function') return pako;
+    } catch (e2) { /* 없음 */ }
+    return null;
+  }
+
+  function bytesToBinary(bytes) {
+    var out = '';
+    for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
+    return out;
+  }
+
+  function binaryToBytes(bin) {
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) & 0xff;
+    return bytes;
+  }
+
+  function utf8Bytes(s) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s);
+    return binaryToBytes(utf8Encode(s));
+  }
+
+  /** 압축 코드(z1 + base64url)인지 */
+  function isCompressedCode(code) {
+    return typeof code === 'string' && code.indexOf(COMPRESS_PREFIX) === 0 && code.length > COMPRESS_PREFIX.length;
+  }
+
+  function deflateCode(json) {
+    var pk = pakoLib();
+    if (!pk) return null;
+    try {
+      var raw = pk.deflateRaw(utf8Bytes(json), { level: 9 });
+      return COMPRESS_PREFIX + binToBase64Url(bytesToBinary(raw));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function inflateCode(code) {
+    var pk = pakoLib();
+    if (!pk) return null;
+    var body = code.slice(COMPRESS_PREFIX.length);
+    var bin = fromBase64Url(body);
+    var raw = pk.inflateRaw(binaryToBytes(bin));
+    return utf8Decode(bytesToBinary(raw));
+  }
+
   function fromBase64Url(code) {
     var t = trim(code).replace(/-/g, '+').replace(/_/g, '/');
     while (t.length % 4) t += '=';
@@ -434,25 +499,33 @@
   }
 
   /**
-   * encodeState(state) → { ok, code, length, bytes, plainBytes, savingsPct, tooLong, warn }
-   * 사람이 읽는 JSON 에서 키를 걷어내 배열로 바꾼 뒤 UTF-8 → base64url.
+   * encodeState(state, opts) → { ok, code, length, bytes, plainBytes, savingsPct, rawLength, compressed, tooLong, warn }
+   * 사람이 읽는 JSON 에서 키를 걷어내 배열로 바꾼 뒤 DEFLATE 압축 + base64url.
+   * opts.compress === false 이면 예전(비압축) 방식으로 내보낸다 — 구버전 수신자용.
    */
-  function encodeState(state) {
+  function encodeState(state, opts) {
+    var o = opts || {};
     var s = normalizeState(state);
     var packed = packState(s);
     var json = JSON.stringify(packed);
     var plain = JSON.stringify(s);
     try {
-      var code = toBase64Url(json);
+      var legacy = toBase64Url(json);
+      var compressedCode = o.compress === false ? null : deflateCode(json);
+      var compressed = !!(compressedCode && compressedCode.length < legacy.length);
+      var code = compressed ? compressedCode : legacy;
       var bytes = byteLength(json);
       var plainBytes = byteLength(plain);
       return {
         ok: true,
         code: code,
         length: code.length,
+        rawLength: legacy.length,
+        compressed: compressed,
         bytes: bytes,
         plainBytes: plainBytes,
         savingsPct: plainBytes ? Math.round((1 - bytes / plainBytes) * 1000) / 10 : 0,
+        linkSavingsPct: legacy.length ? Math.round((1 - code.length / legacy.length) * 1000) / 10 : 0,
         tooLong: code.length > MAX_CODE,
         warn: code.length > WARN_CODE,
         state: s
@@ -489,13 +562,22 @@
   function decodeState(input) {
     var code = extractCode(input);
     if (!code) return { ok: false, reason: 'empty', message: '공유 코드가 비어 있습니다.' };
-    var raw;
-    try { raw = fromBase64Url(code); } catch (e) {
-      return { ok: false, reason: 'bad_base64', message: '공유 링크가 손상되었습니다(주소가 잘렸을 수 있습니다).' };
-    }
     var json;
-    try { json = utf8Decode(raw); } catch (e) {
-      return { ok: false, reason: 'bad_base64', message: '공유 링크를 읽지 못했습니다.' };
+    if (isCompressedCode(code)) {
+      if (!pakoLib()) {
+        return { ok: false, reason: 'need_inflate', message: '압축된 링크를 풀 라이브러리를 불러오지 못했습니다. 앱을 새로고침해 주세요.' };
+      }
+      try { json = inflateCode(code); } catch (e) {
+        return { ok: false, reason: 'bad_inflate', message: '공유 링크가 손상되었습니다(주소가 잘렸을 수 있습니다).' };
+      }
+    } else {
+      var raw;
+      try { raw = fromBase64Url(code); } catch (e) {
+        return { ok: false, reason: 'bad_base64', message: '공유 링크가 손상되었습니다(주소가 잘렸을 수 있습니다).' };
+      }
+      try { json = utf8Decode(raw); } catch (e) {
+        return { ok: false, reason: 'bad_base64', message: '공유 링크를 읽지 못했습니다.' };
+      }
     }
     var packed;
     try { packed = JSON.parse(json); } catch (e) {
@@ -1147,6 +1229,9 @@
     HISTORY_KEY: HISTORY_KEY,
     DRAFT_KEY: DRAFT_KEY,
     MAX_CODE: MAX_CODE,
+    COMPRESS_PREFIX: COMPRESS_PREFIX,
+    isCompressedCode: isCompressedCode,
+    hasCompressor: function () { return !!pakoLib(); },
     WARN_CODE: WARN_CODE,
     MAX_ITEMS: MAX_ITEMS,
     STATUS_ORDER: STATUS_ORDER,

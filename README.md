@@ -258,3 +258,11 @@ python3 uitest.py
 배포 시 `apps/proof-of-work-report/` 폴더를 `marcj81/proof-of-work-report` 저장소 루트로 올리고,
 GitHub Pages(브랜치 `main` / 루트)를 켜면 `sitemap.xml`의 주소와 일치합니다.
 `.nojekyll`이 포함되어 있어 `_`로 시작하는 파일도 그대로 서빙됩니다.
+
+## 공유 링크 압축 — pako (MIT)
+
+- `?d=` 공유 코드를 `pako`(MIT, v2.1.0) DEFLATE(raw, level 9)로 압축한 뒤 base64url로 인코딩합니다. `assets/vendor/pako.min.js`는 저장소 안 파일이라 실행 중 외부 요청이 없습니다.
+- 새 코드는 `z1`로 시작합니다(압축). 예전 비압축 코드(`eyJ…`)는 그대로 읽히므로 **기존에 뿌린 링크도 계속 열립니다**. `encodeState(state, {compress:false})`로 구버전 형식도 만들 수 있습니다.
+- 실측(6항목·긴 메모 리포트): 링크 3,614자 → 1,761자(51.3% 감소). 30항목 리포트는 27,958자 → 621자(97.8%).
+- 검증: `node test.js` 424개 통과, `python3 uitest.py` 실제 Chrome 307개 통과(압축 왕복·구버전 링크 복원 포함).
+- 라이선스 고지: `THIRD-PARTY-NOTICES.md`.

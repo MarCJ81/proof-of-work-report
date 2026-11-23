@@ -832,7 +832,8 @@
     shareUrl = enc.url;
     var input = $('#share-url');
     input.value = enc.url;
-    $('#share-size').textContent = '링크 ' + enc.length + '자 · 내용 ' + enc.bytes + '바이트 (원본 JSON 대비 ' + enc.savingsPct + '% 압축)';
+    $('#share-size').textContent = '링크 ' + enc.length + '자 · ' + (enc.compressed ? 'DEFLATE 압축' : '비압축')
+      + ' · 원본 JSON ' + enc.bytes + '바이트 (키 생략 ' + enc.savingsPct + '% · 링크 길이 ' + enc.linkSavingsPct + '% 감소)';
     $('#share-warn').hidden = !(enc.warn || enc.tooLong);
     if (enc.tooLong) {
       $('#share-warn').hidden = false;
