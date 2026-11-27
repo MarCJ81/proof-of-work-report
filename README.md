@@ -296,6 +296,6 @@ GitHub Pages(브랜치 `main` / 루트)를 켜면 `sitemap.xml`의 주소와 일
 - 테스트는 `window.ProConnector.setTransport()` 로 401/429/200/네트워크 실패를 모의해 UI 문구까지 검증합니다.
 
 ### V2 검증
-- `python3 uitest_v2.py` — 실제 Chrome, 1280/390 · KO/EN: **112 통과 0 실패**
+- `python3 uitest_v2.py` — 실제 Chrome, 1280/390 · KO/EN: **116 통과 0 실패**
   (로고 PNG/SVG 업로드·삭제·기본값 복원, 악성 SVG 무해화, 캡처 3장 상한·삭제·자동 축소, 도넛/상태 다이어그램·브랜드 컬러 연동, 클라이언트 뷰·공유 링크·읽기 뷰, A4 PDF 2장, EN 모드 I18N_MISS 0, API 테스트 401/429/200/네트워크, 모바일 가로 넘침 0)
 - `python3 coretest.py` (quickjs, DOM 없이) — **16 통과 0 실패**: 상태 정규화(위험 data URL 거부·중복 제거), 로고·캡처 공유 왕복, 구형 링크 호환, 링크 길이 초과 시 캡처 제외.

@@ -71,12 +71,15 @@
     "마지막 확인에서 실패했습니다.": "The last check failed.",
     "무료 모드입니다. 키를 저장한 뒤 [연결 테스트]를 누르면 실제 응답으로 확인합니다.": "Free mode. Save a key and press Connection test to check a real response.",
     "키는 저장됐지만 실제 응답을 아직 확인하지 않았습니다. [연결 테스트]를 눌러 주세요.": "The key is saved but no real response has been checked yet. Press Connection test.",
+    "키는 저장됐지만 아직 실제 응답을 확인하지 않았습니다. [연결 테스트]를 눌러 주세요.": "The key is saved but no real response has been checked yet. Press Connection test.",
     "연결을 확인하는 중…": "Checking the connection…",
     "연결된 키가 없습니다. 먼저 API 키를 저장하세요.": "No key is connected. Save an API key first.",
     "키가 비어 있거나 너무 짧습니다.": "The key is empty or too short.",
     "네트워크에서 막혔습니다. 인터넷·방화벽·CORS를 확인하세요.": "Blocked at the network. Check the internet, firewall and CORS.",
     "응답을 해석하지 못했습니다. 모델·서버 응답 형식을 확인하세요.": "Could not read the response. Check the model and the server response format.",
     "키를 삭제했습니다. 무료 모드로 돌아갑니다.": "Key deleted. Back to free mode.",
+    "🔌 API 연결 테스트": "🔌 API connection test",
+    "연결 테스트": "Connection test",
     "OpenAI는 브라우저에서 직접 호출하면 CORS로 막힙니다. 키가 맞아도 이 화면에서는 실패할 수 있으니 Google Gemini 키를 쓰거나 자체 API 서버(프록시)를 연결하세요.": "OpenAI blocks direct browser calls with CORS. A correct key can still fail here — use a Google Gemini key or connect your own API server (proxy)."
   };
 

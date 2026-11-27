@@ -2122,7 +2122,7 @@
     ]));
 
     /* 버튼 */
-    var testBtn = el('button', { type: 'button', class: 'pc-btn', text: '연결 테스트' });
+    var testBtn = el('button', { type: 'button', class: 'pc-btn', text: '🔌 API 연결 테스트' });
     var saveBtn = el('button', { type: 'button', class: 'pc-btn pc-btn-primary', text: '저장하고 연결' });
     var clearBtn = el('button', { type: 'button', class: 'pc-btn pc-btn-danger', text: '연결 해제 및 키 삭제' });
     body.appendChild(el('div', { class: 'pc-actions' }, [testBtn, saveBtn, clearBtn]));
