@@ -285,6 +285,7 @@
         <button type="button" class="btn btn-primary btn-sm" id="btn-client-print">A4 PDF</button>
       </div>
     </div>
+    <p class="client-note" id="client-shot-note" hidden></p>
     <div class="report-paper" id="report-preview"></div>
   </section>
 
@@ -321,6 +322,25 @@
     </div>
 
     <div class="bridge-grid">
+      <section class="card pro-check" id="pro-check" aria-labelledby="pro-check-title">
+        <div class="card-head">
+          <h2 id="pro-check-title"><span class="idx">00</span> API 연결 테스트</h2>
+          <span class="pill" id="pro-check-pill">미검증</span>
+        </div>
+        <div class="pro-check-grid">
+          <div class="pro-check-state">
+            <p class="pro-check-provider"><b id="pro-check-provider">무료 모드</b><span id="pro-check-model">API 키를 연결하면 여기에 모델이 표시됩니다</span></p>
+            <p class="pro-check-msg" id="pro-check-msg" role="status" aria-live="polite">아직 연결을 확인하지 않았습니다. 테스트를 눌러 실제 응답을 확인하세요.</p>
+            <p class="pro-check-hint" id="pro-check-hint" hidden></p>
+            <p class="pro-check-time" id="pro-check-time"></p>
+          </div>
+          <div class="pro-check-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-pro-test"><span class="pro-test-ico" aria-hidden="true">🔌</span><span class="pro-test-label">API 연결 테스트</span></button>
+            <button type="button" class="btn btn-outline btn-sm" id="btn-pro-settings">키 설정 열기</button>
+          </div>
+        </div>
+        <p class="field-note" id="pro-check-note">실제 제공자에게 짧은 요청 1회(약 1토큰)를 보내 200 응답이 올 때만 “검증됨”으로 표시합니다. 요금은 각 API 계정에 청구됩니다.</p>
+      </section>
       <section class="card">
         <div class="card-head">
           <h2><span class="idx">01</span> 거친 메모</h2>
@@ -384,6 +404,25 @@
     <div class="brand-grid">
       <section class="card">
         <div class="card-head"><h2>브랜드</h2><span class="hint">가명으로 미리 채워져 있습니다</span></div>
+        <div class="logo-field">
+          <div class="logo-field-head">
+            <span class="logo-field-label">회사 로고 이미지 <span class="hint">PNG · JPG · WEBP · SVG</span></span>
+            <span class="pill" id="logo-size">없음</span>
+          </div>
+          <div class="logo-drop" id="logo-drop">
+            <div class="logo-thumb" id="logo-thumb" aria-hidden="true"></div>
+            <div class="logo-drop-body">
+              <b id="logo-state">로고 텍스트로 표시 중</b>
+              <small id="logo-hint">이미지를 끌어다 놓거나 파일을 고르세요. 큰 파일은 자동으로 줄여 저장합니다.</small>
+              <div class="logo-drop-actions">
+                <button type="button" class="btn btn-outline btn-sm" id="btn-logo-pick">이미지 선택</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-logo-clear" disabled>삭제</button>
+              </div>
+            </div>
+          </div>
+          <input type="file" id="logo-file" accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml" hidden />
+          <p class="field-note">로고는 리포트 머리말·A4 PDF·공유 링크에 그대로 들어갑니다. SVG 는 안전한 래스터(PNG/WEBP)로 바꿔 저장합니다.</p>
+        </div>
         <div class="grid-2">
           <div class="field">
             <label for="b-logo">로고 텍스트</label>
@@ -481,6 +520,7 @@
       <span id="share-size">0자</span>
       <span id="share-warn" class="warn-text" hidden>링크가 깁니다. 항목을 줄이거나 메모를 짧게 해 주세요.</span>
     </div>
+    <p class="share-images" id="share-images" hidden></p>
     <div class="modal-actions">
       <button type="button" class="btn btn-outline" id="btn-open-share">새 탭에서 열기</button>
       <button type="button" class="btn btn-ghost" id="btn-share-close">닫기</button>
@@ -489,6 +529,9 @@
 </div>
 
 <div class="toast-root" id="toast-root" aria-live="polite" aria-atomic="false"></div>
+
+<!-- 증빙 캡처 파일 선택(모든 탭에서 동작하도록 화면 밖에 둔다) -->
+<input type="file" id="shot-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple hidden />
 
 <script src="assets/vendor/pako.min.js"></script>
 <script src="core.js"></script>

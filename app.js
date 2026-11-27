@@ -24,6 +24,153 @@
   }
   function clear(n) { while (n && n.firstChild) n.removeChild(n.firstChild); return n; }
 
+  /* ── 언어 · 이미지 도우미 ─────────────────────────────── */
+  function L(ko) {
+    if (!isEn()) return ko;
+    var t = window.ONETAP_I18N.t(ko);
+    return (typeof t === 'string' && t && t !== ko) ? t : ko;
+  }
+
+  function isEn() {
+    return !!(window.ONETAP_I18N && window.ONETAP_I18N.lang() === 'en');
+  }
+
+  /* data URL 은 base64 라 원본의 약 4/3. 사람이 읽는 KB 로 보여 준다. */
+  function kbOf(chars) { return Math.max(1, Math.round(chars / 1365)) + 'KB'; }
+
+  var IMG = {
+    logo: { maxSide: 512, maxChars: 90000, keepAlpha: true },
+    shot: { maxSide: 1000, maxChars: 150000, keepAlpha: false }
+  };
+  var SHOT_BUDGET = 1600000;   /* 이 브라우저에 저장할 캡처 data URL 문자 합 상한(로컬 저장소 5MB 보호) */
+
+  var webpOk = null;
+  function supportsWebp() {
+    if (webpOk !== null) return webpOk;
+    try {
+      var c = document.createElement('canvas');
+      c.width = 1; c.height = 1;
+      webpOk = c.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+    } catch (e) { webpOk = false; }
+    return webpOk;
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '')); };
+      fr.onerror = function () { reject(new Error('read_failed')); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function readFileAsText(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '')); };
+      fr.onerror = function () { reject(new Error('read_failed')); };
+      fr.readAsText(file);
+    });
+  }
+
+  function loadImage(src) {
+    return new Promise(function (resolve, reject) {
+      var im = new Image();
+      im.onload = function () { resolve(im); };
+      im.onerror = function () { reject(new Error('decode_failed')); };
+      im.src = src;
+    });
+  }
+
+  /* SVG 안의 스크립트·이벤트 속성·외부 참조를 먼저 걷어낸다.
+     화면에는 어차피 <img> 로만 그리지만, 파일을 다시 내려받는 경우까지 막는다. */
+  function sanitizeSvg(text) {
+    var t = String(text || '');
+    t = t.replace(/<!--[\s\S]*?-->/g, '');
+    t = t.replace(/<script[\s\S]*?<\/script\s*>/gi, '');
+    t = t.replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, '');
+    t = t.replace(/<image[^>]*>/gi, '');
+    t = t.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    t = t.replace(/(href|xlink:href)\s*=\s*("|')\s*(javascript:|data:text\/html)[^"']*\2/gi, '');
+    t = t.replace(/<(iframe|object|embed|audio|video)[\s\S]*?<\/\1\s*>/gi, '');
+    return t;
+  }
+
+  function fileToImage(file) {
+    var name = String(file && file.name || '');
+    var type = String(file && file.type || '');
+    if ((type === 'image/svg+xml' || /\.svg$/i.test(name))) {
+      return readFileAsText(file).then(function (text) {
+        if (text.length > 1200000) throw new Error('too_big');
+        var safe = sanitizeSvg(text);
+        return loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(safe));
+      });
+    }
+    return readFileAsDataUrl(file).then(loadImage);
+  }
+
+  function drawScaled(img, maxSide, quality, keepAlpha) {
+    var w = img.naturalWidth || img.width || 0;
+    var h = img.naturalHeight || img.height || 0;
+    if (!w || !h) return '';
+    var f = Math.min(1, maxSide / Math.max(w, h));
+    var cw = Math.max(1, Math.round(w * f));
+    var ch = Math.max(1, Math.round(h * f));
+    var c = document.createElement('canvas');
+    c.width = cw;
+    c.height = ch;
+    var ctx = c.getContext('2d');
+    if (!ctx) return '';
+    if (!keepAlpha) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    try { ctx.drawImage(img, 0, 0, cw, ch); } catch (e) { return ''; }
+    var type = supportsWebp() ? 'image/webp' : (keepAlpha ? 'image/png' : 'image/jpeg');
+    var out = '';
+    try { out = c.toDataURL(type, quality); } catch (e) { out = ''; }
+    if (!out || out.indexOf('data:image/') !== 0 || out.length < 200) return '';
+    return out;
+  }
+
+  /* 적정 크기·화질로 줄이고, 그래도 크면 한 단계 더 줄인다. */
+  function encodeImage(img, opt) {
+    var tries = [
+      { side: opt.maxSide, q: 0.86 },
+      { side: Math.round(opt.maxSide * 0.8), q: 0.72 },
+      { side: Math.round(opt.maxSide * 0.62), q: 0.6 }
+    ];
+    var best = '';
+    for (var i = 0; i < tries.length; i++) {
+      var out = drawScaled(img, tries[i].side, tries[i].q, opt.keepAlpha);
+      if (!out) continue;
+      best = out;
+      if (out.length <= opt.maxChars) return out;
+    }
+    return '';
+  }
+
+  function prepareImage(file, opt) {
+    return Promise.resolve()
+      .then(function () { return fileToImage(file); })
+      .then(function (img) {
+        var src = encodeImage(img, opt);
+        if (!src) throw new Error('encode_failed');
+        return { ok: true, src: src, chars: src.length, w: img.naturalWidth || img.width || 0, h: img.naturalHeight || img.height || 0 };
+      })
+      .then(null, function (err) {
+        return { ok: false, reason: (err && err.message) || 'failed' };
+      });
+  }
+
+  function imageErrorText(res) {
+    if (res && res.reason === 'too_big') return L('SVG 파일이 너무 큽니다(1.2MB 이하만 됩니다).');
+    if (res && res.reason === 'encode_failed') return L('이미지를 줄이지 못했습니다. 다른 파일을 써 보세요.');
+    return L('이 브라우저에서 읽을 수 없는 이미지입니다(PNG · JPG · WEBP · SVG).');
+  }
+
   var ICON = {
     link: '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M6.5 9.5l3-3M5.8 7.2l-1 1a2.3 2.3 0 003.3 3.3l1-1M10.2 8.8l1-1a2.3 2.3 0 00-3.3-3.3l-1 1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
     trash: '<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path d="M4 6h12M8 3.5h4M6.2 6l.6 10h6.4l.6-10M8.4 8.6v5M11.6 8.6v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -356,6 +503,13 @@
     r3.appendChild(memo);
     row.appendChild(r3);
 
+    /* 증빙 캡처 — 항목당 최대 3장 */
+    var shots = el('div', 'row-shots');
+    shots.setAttribute('data-shots-for', it.id);
+    shots.appendChild(shotsHead(it));
+    shots.appendChild(shotsGrid(it));
+    row.appendChild(shots);
+
     /* 4행: 블로커일 때 요청 */
     if (status === 'block') {
       var r4 = el('div', 'row-4');
@@ -377,6 +531,146 @@
     updateEvidenceHint(row, it);
     if (!it.hours && status === 'done') hours.classList.add('is-empty');
     return row;
+  }
+
+  /* ── 증빙 캡처 ──────────────────────── */
+
+  function shotsHead(it) {
+    var head = el('div', 'shots-head');
+    head.appendChild(el('span', 'shots-label', L('증빙 캡처')));
+    var n = el('span', 'shots-count', (it.shots || []).length + '/' + C.MAX_SHOTS);
+    n.setAttribute('data-shots-count', it.id);
+    head.appendChild(n);
+    var add = el('button', 'shot-add');
+    add.type = 'button';
+    add.setAttribute('data-shot-add', it.id);
+    add.innerHTML = ICON.plus;
+    add.appendChild(document.createTextNode(' ' + L('캡처 추가')));
+    if ((it.shots || []).length >= C.MAX_SHOTS) { add.disabled = true; add.classList.add('is-full'); }
+    head.appendChild(add);
+    return head;
+  }
+
+  function shotsGrid(it) {
+    var grid = el('div', 'shot-grid');
+    grid.setAttribute('data-shots', it.id);
+    fillShots(grid, it);
+    return grid;
+  }
+
+  function fillShots(grid, it) {
+    clear(grid);
+    var shots = it.shots || [];
+    if (!shots.length) {
+      var empty = el('button', 'shot-empty');
+      empty.type = 'button';
+      empty.setAttribute('data-shot-add', it.id);
+      empty.textContent = L('사진을 끌어다 놓거나 눌러서 추가 · 최대 3장');
+      grid.appendChild(empty);
+      return;
+    }
+    shots.forEach(function (src, i) {
+      var cell = el('div', 'shot-cell');
+      var im = el('img');
+      im.src = src;
+      im.alt = L('작업 캡처') + ' ' + (i + 1);
+      im.loading = 'lazy';
+      cell.appendChild(im);
+      var del = el('button', 'shot-del');
+      del.type = 'button';
+      del.setAttribute('data-shot-del', it.id + ':' + i);
+      del.setAttribute('aria-label', L('캡처 삭제') + ' ' + (i + 1));
+      del.innerHTML = ICON.trash;
+      cell.appendChild(del);
+      grid.appendChild(cell);
+    });
+    if (shots.length < C.MAX_SHOTS) {
+      var more = el('button', 'shot-cell shot-more');
+      more.type = 'button';
+      more.setAttribute('data-shot-add', it.id);
+      more.setAttribute('aria-label', L('캡처 추가'));
+      more.innerHTML = ICON.plus;
+      grid.appendChild(more);
+    }
+  }
+
+  function refreshShots(it) {
+    var host = $('[data-shots-for="' + it.id + '"]');
+    if (!host) { renderItems(); return; }
+    clear(host);
+    host.appendChild(shotsHead(it));
+    host.appendChild(shotsGrid(it));
+  }
+
+  function pickShots(id) {
+    var input = $('#shot-file');
+    if (!input) return;
+    input.setAttribute('data-item', id);
+    input.value = '';
+    input.click();
+  }
+
+  function dropShot(key) {
+    var parts = String(key || '').split(':');
+    var it = itemById(parts[0]);
+    var idx = parseInt(parts[1], 10);
+    if (!it || !Array.isArray(it.shots) || isNaN(idx) || !it.shots[idx]) return;
+    var removed = it.shots.splice(idx, 1)[0];
+    refreshShots(it);
+    onEdit();
+    toast(L('캡처를 삭제했습니다.'), null, L('되돌리기'), function () {
+      it.shots.splice(Math.min(idx, it.shots.length), 0, removed);
+      refreshShots(it);
+      onEdit();
+    });
+  }
+
+  function shotToast(added, chars, overflow, failed) {
+    var en = isEn();
+    var bits = [];
+    if (en) {
+      bits.push(added + (added === 1 ? ' capture added' : ' captures added') + ' (' + kbOf(chars) + ' compressed)');
+      if (overflow) bits.push('3 per item max');
+      if (failed) bits.push(failed + ' could not be read');
+      return bits.join(' · ');
+    }
+    bits.push('캡처 ' + added + '장을 추가했습니다 (' + kbOf(chars) + '로 압축)');
+    if (overflow) bits.push('항목당 3장까지만 넣었습니다');
+    if (failed) bits.push(failed + '장은 읽지 못했습니다');
+    return bits.join(' · ');
+  }
+
+  function addShots(id, files) {
+    var it = itemById(id);
+    if (!it) return;
+    if (!Array.isArray(it.shots)) it.shots = [];
+    var list = Array.prototype.slice.call(files || []).filter(function (f) {
+      return f && (/^image\//.test(f.type || '') || /\.(png|jpe?g|webp|svg)$/i.test(f.name || ''));
+    });
+    if (!list.length) { toast(L('이미지 파일만 붙일 수 있습니다.'), 'warn'); return; }
+    var room = C.MAX_SHOTS - it.shots.length;
+    if (room <= 0) { toast(L('항목당 캡처는 3장까지입니다.'), 'warn'); return; }
+    var overflow = list.length > room;
+    list = list.slice(0, room);
+    toast(L('캡처를 압축하는 중…'));
+    Promise.all(list.map(function (f) { return prepareImage(f, IMG.shot); })).then(function (out) {
+      var added = 0, failed = 0, chars = 0;
+      for (var i = 0; i < out.length; i++) {
+        var r = out[i];
+        if (!r || !r.ok) { failed++; continue; }
+        if (C.imageChars(state) + r.chars > SHOT_BUDGET) { toast(L('이미지 저장 공간이 부족합니다. 오래된 캡처를 지우고 다시 해 보세요.'), 'warn'); break; }
+        it.shots.push(r.src);
+        added++;
+        chars += r.chars;
+      }
+      refreshShots(it);
+      if (added) {
+        onEdit();
+        toast(shotToast(added, chars, overflow, failed));
+      } else if (failed) {
+        toast(imageErrorText(out[0]), 'error');
+      }
+    });
   }
 
   function updateEvidenceHint(row, it) {
@@ -463,6 +757,16 @@
     });
 
     host.addEventListener('click', function (e) {
+      var shotAdd = e.target.closest('[data-shot-add]');
+      if (shotAdd) {
+        pickShots(shotAdd.getAttribute('data-shot-add'));
+        return;
+      }
+      var shotDel = e.target.closest('[data-shot-del]');
+      if (shotDel) {
+        dropShot(shotDel.getAttribute('data-shot-del'));
+        return;
+      }
       var addBtn = e.target.closest('[data-add]');
       if (addBtn) {
         addItem(addBtn.getAttribute('data-add'));
@@ -473,6 +777,34 @@
       var row = del.closest('.item-row');
       var id = row && row.getAttribute('data-id');
       removeItem(id);
+    });
+
+    /* 캡처: 파일 고르기 · 끌어다 놓기 */
+    var shotFile = $('#shot-file');
+    if (shotFile) {
+      shotFile.addEventListener('change', function () {
+        var id = shotFile.getAttribute('data-item') || '';
+        addShots(id, shotFile.files);
+        shotFile.value = '';
+      });
+    }
+    host.addEventListener('dragover', function (e) {
+      var zone = e.target.closest ? e.target.closest('[data-shots-for]') : null;
+      if (!zone) return;
+      e.preventDefault();
+      zone.classList.add('is-drop');
+    });
+    host.addEventListener('dragleave', function (e) {
+      var zone = e.target.closest ? e.target.closest('[data-shots-for]') : null;
+      if (!zone) return;
+      zone.classList.remove('is-drop');
+    });
+    host.addEventListener('drop', function (e) {
+      var zone = e.target.closest ? e.target.closest('[data-shots-for]') : null;
+      if (!zone) return;
+      e.preventDefault();
+      zone.classList.remove('is-drop');
+      addShots(zone.getAttribute('data-shots-for'), e.dataTransfer && e.dataTransfer.files);
     });
   }
 
@@ -542,6 +874,18 @@
     renderReport(state, $('#print-root'), { mode: 'print' });
     renderBrandPreview();
     refreshPrompt();
+    updateClientNote();
+  }
+
+  function updateClientNote() {
+    var note = $('#client-shot-note');
+    if (!note) return;
+    var shots = C.shotCount(state);
+    if (!shots) { note.hidden = true; note.textContent = ''; return; }
+    note.hidden = false;
+    note.textContent = isEn()
+      ? shots + ' evidence ' + (shots === 1 ? 'capture' : 'captures') + ' appear in this preview and in the A4 PDF. A share link carries them only if the link stays short enough — the PDF is the safe way to send images.'
+      : '증빙 캡처 ' + shots + '장이 이 미리보기와 A4 PDF에 나옵니다. 공유 링크는 길이 제한 때문에 캡처가 빠질 수 있으니, 이미지는 PDF로 보내는 게 확실합니다.';
   }
 
   function updateGroupCounts() {
@@ -655,7 +999,17 @@
     /* 머리말 */
     var head = el('header', 'rep-head');
     var brand = el('div', 'rep-brand');
-    var mark = el('span', 'rep-logo-mark', (st.brand.logo || st.brand.company || 'R').slice(0, 1));
+    var mark;
+    if (st.brand.logoImg) {
+      mark = el('span', 'rep-logo-img-wrap');
+      var logo = el('img', 'rep-logo-img');
+      logo.src = st.brand.logoImg;
+      logo.alt = st.brand.logo || st.brand.company || 'logo';
+      logo.loading = 'eager';
+      mark.appendChild(logo);
+    } else {
+      mark = el('span', 'rep-logo-mark', (st.brand.logo || st.brand.company || 'R').slice(0, 1));
+    }
     brand.appendChild(mark);
     var bt = el('span', 'rep-brand-text');
     bt.appendChild(el('b', null, st.brand.logo || st.brand.company || '리포트'));
@@ -693,6 +1047,10 @@
     stats.appendChild(statCell(t.deltaPct === null ? '—' : (t.deltaPct > 0 ? '+' : '') + t.deltaPct + '%', '지난 기간 대비'));
     article.appendChild(stats);
 
+    /* 데이터 다이어그램 — 카테고리 시간 분포 · 진행률 */
+    var viz = renderViz(st, t, settings);
+    if (viz) article.appendChild(viz);
+
     /* 요약 문장 */
     if (st.summary) {
       var sum = el('div', 'rep-summary');
@@ -724,6 +1082,19 @@
         var hoursText = it.hours ? C.formatHours(it.hours) : (it.status === 'next' ? '예정' : (it.status === 'done' ? '시간 미기록' : ''));
         if (hoursText) item.appendChild(el('span', 'hours' + (it.hours ? '' : ' is-empty'), hoursText));
         if (it.memo) item.appendChild(el('p', 'rep-memo', it.memo));
+        if (it.shots && it.shots.length) {
+          var shots = el('div', 'rep-shots');
+          it.shots.forEach(function (src, si) {
+            var fig = el('figure', 'rep-shot');
+            var im = el('img');
+            im.src = src;
+            im.alt = L('작업 캡처') + ' ' + (si + 1) + ' — ' + (it.title || '');
+            im.loading = settings.mode === 'print' ? 'eager' : 'lazy';
+            fig.appendChild(im);
+            shots.appendChild(fig);
+          });
+          item.appendChild(shots);
+        }
         var url = C.safeUrl(it.evidence);
         if (url) {
           var links = el('div', 'rep-links');
@@ -782,6 +1153,157 @@
     if (settings.mode === 'print') mount.setAttribute('data-print', '1');
   }
 
+  /* ── 리포트 다이어그램(SVG · 인라인) ─────────────────── */
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function mixWhite(hex, amt) {
+    var h = String(hex || '#2f5bff').replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    if (!/^[0-9a-f]{6}$/i.test(h)) h = '2f5bff';
+    var r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    function mix(v) { return Math.round(v + (255 - v) * amt); }
+    function hex2(v) { return ('0' + v.toString(16)).slice(-2); }
+    return '#' + hex2(mix(r)) + hex2(mix(g)) + hex2(mix(b));
+  }
+
+  function svgEl(tag, attrs) {
+    var n = document.createElementNS(SVG_NS, tag);
+    if (attrs) for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+
+  function catColors(base, count) {
+    var steps = [0, 0.16, 0.34, 0.5, 0.66, 0.8];
+    var out = [];
+    for (var i = 0; i < count; i++) out.push(mixWhite(base, steps[Math.min(i, steps.length - 1)]));
+    return out;
+  }
+
+  function vizPanel(cls) {
+    var b = el('div', 'viz-block ' + cls);
+    return b;
+  }
+
+  function vizTitle(text, tail) {
+    var p = el('p', 'viz-title');
+    p.appendChild(document.createTextNode(L(text)));
+    if (tail) p.appendChild(el('span', 'viz-tail', tail));
+    return p;
+  }
+
+  function categoryViz(t, brandColor) {
+    var useHours = t.totalHours > 0;
+    var rows = t.categories.map(function (c) {
+      return { label: c.label, value: useHours ? c.hours : c.count };
+    }).filter(function (r) { return r.value > 0; });
+    if (!rows.length) return null;
+    var baseCount = useHours ? t.totalHours : t.doneCount + t.doingCount;
+    var total = rows.reduce(function (a, r) { return a + r.value; }, 0);
+    var colors = catColors(brandColor || '#2f5bff', rows.length);
+
+    var panel = vizPanel('viz-cats');
+    panel.appendChild(vizTitle(useHours ? '카테고리별 투입 시간' : '카테고리별 항목 수', useHours ? C.formatHours(t.totalHours) : total + ' ' + L('건')));
+
+    var body = el('div', 'viz-body');
+    var size = 108;
+    var svg = svgEl('svg', { viewBox: '0 0 ' + size + ' ' + size, width: size, height: size, role: 'img', class: 'viz-donut' });
+    svg.setAttribute('aria-label', L(useHours ? '카테고리별 투입 시간 도넛 차트' : '카테고리별 항목 수 도넛 차트'));
+    var cx = size / 2, cy = size / 2, sw = 22, rad = cx - sw / 2 - 1, circ = 2 * Math.PI * rad;
+    svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: rad, fill: 'none', stroke: '#eef0f3', 'stroke-width': sw }));
+    var acc = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var frac = rows.length === 1 ? 1 : rows[i].value / total;
+      var len = Math.max(0.6, frac * circ - 1.4);
+      var arc = svgEl('circle', {
+        cx: cx, cy: cy, r: rad, fill: 'none', stroke: colors[i], 'stroke-width': sw,
+        'stroke-dasharray': len.toFixed(2) + ' ' + (circ - len).toFixed(2),
+        'stroke-dashoffset': (-acc).toFixed(2),
+        transform: 'rotate(-90 ' + cx + ' ' + cy + ')'
+      });
+      svg.appendChild(arc);
+      acc += frac * circ;
+    }
+    var big = svgEl('text', { x: cx, y: cy + 1, 'text-anchor': 'middle', class: 'viz-donut-big' });
+    big.textContent = useHours ? C.formatHours(t.totalHours) : String(baseCount) + ' ' + L('건');
+    svg.appendChild(big);
+    var cap = svgEl('text', { x: cx, y: cy + 15, 'text-anchor': 'middle', class: 'viz-donut-cap' });
+    cap.textContent = L(useHours ? '총 소요' : '완료·진행');
+    svg.appendChild(cap);
+    body.appendChild(svg);
+
+    var legend = el('ul', 'viz-legend');
+    for (var j = 0; j < rows.length; j++) {
+      var li = el('li');
+      var dot = el('i', 'viz-dot');
+      dot.style.background = colors[j];
+      li.appendChild(dot);
+      li.appendChild(el('span', 'viz-name', rows[j].label));
+      li.appendChild(el('b', 'viz-value', useHours ? C.formatHours(rows[j].value) : rows[j].value + ' ' + L('건')));
+      var pct = baseCount > 0 ? Math.round((rows[j].value / baseCount) * 100) : 0;
+      li.appendChild(el('small', 'viz-pct', pct + '%'));
+      legend.appendChild(li);
+    }
+    body.appendChild(legend);
+    panel.appendChild(body);
+    return panel;
+  }
+
+  function statusViz(t, brandColor) {
+    var stages = [
+      { id: 'done', label: '완료', n: t.doneCount },
+      { id: 'doing', label: '진행 중', n: t.doingCount },
+      { id: 'next', label: '다음 계획', n: t.nextCount },
+      { id: 'block', label: '확인 필요', n: t.blockCount }
+    ];
+    var total = t.itemCount;
+    if (!total) return null;
+    var color = brandColor || '#2f5bff';
+    var style = {
+      done: color,
+      doing: mixWhite(color, 0.34),
+      next: mixWhite(color, 0.66),
+      block: '#b42318'
+    };
+
+    var panel = vizPanel('viz-status');
+    panel.appendChild(vizTitle('작업 상태 진행률', total + ' ' + L('건')));
+
+    var stack = el('div', 'viz-stack');
+    stack.setAttribute('role', 'img');
+    stack.setAttribute('aria-label', stages.map(function (s) { return L(s.label) + ' ' + s.n; }).join(', '));
+    stages.forEach(function (s) {
+      if (!s.n) return;
+      var seg = el('i');
+      seg.style.width = ((s.n / total) * 100).toFixed(2) + '%';
+      seg.style.background = style[s.id];
+      seg.title = L(s.label) + ' ' + s.n;
+      stack.appendChild(seg);
+    });
+    panel.appendChild(stack);
+
+    var flow = el('ol', 'viz-flow');
+    stages.forEach(function (s) {
+      var li = el('li', 'viz-step is-' + s.id);
+      li.appendChild(el('b', null, s.n));
+      li.appendChild(el('span', null, s.label));
+      flow.appendChild(li);
+    });
+    panel.appendChild(flow);
+    return panel;
+  }
+
+  function renderViz(st, t) {
+    if (!t || !t.itemCount) return null;
+    var box = el('div', 'rep-viz');
+    var brandColor = st && st.brand ? st.brand.color : '#2f5bff';
+    var cats = categoryViz(t, brandColor);
+    var status = statusViz(t, brandColor);
+    if (cats) box.appendChild(cats);
+    if (status) box.appendChild(status);
+    return box.children.length ? box : null;
+  }
+
   function itemsOf2(st, status) {
     return st.items.filter(function (it) { return it.status === status; });
   }
@@ -829,9 +1351,32 @@
     }
     var enc = C.shareLink(state, baseUrl());
     if (!enc.ok) { toast('공유 링크를 만들지 못했습니다.', 'error'); return null; }
+    var shots = C.shotCount(state);
+    var dropped = 0;
+    if (shots && enc.tooLong) {
+      var slim = C.shareLink(C.stripShots(state), baseUrl());
+      if (slim.ok && !slim.tooLong) { dropped = shots; enc = slim; }
+    }
     shareUrl = enc.url;
     var input = $('#share-url');
     input.value = enc.url;
+    var note = $('#share-images');
+    if (note) {
+      if (!shots) { note.hidden = true; note.textContent = ''; }
+      else {
+        note.hidden = false;
+        note.className = 'share-images' + (dropped ? ' is-warn' : '');
+        if (dropped) {
+          note.textContent = isEn()
+            ? 'The link was too long, so ' + shots + ' evidence ' + (shots === 1 ? 'capture was' : 'captures were') + ' left out. The A4 PDF still includes them.'
+            : '링크가 너무 길어 캡처 ' + shots + '장은 링크에서 뺐습니다. A4 PDF에는 그대로 들어갑니다.';
+        } else {
+          note.textContent = isEn()
+            ? shots + ' evidence ' + (shots === 1 ? 'capture is' : 'captures are') + ' inside this link.'
+            : '캡처 ' + shots + '장이 이 링크에 함께 담깁니다.';
+        }
+      }
+    }
     $('#share-size').textContent = '링크 ' + enc.length + '자 · ' + (enc.compressed ? 'DEFLATE 압축' : '비압축')
       + ' · 원본 JSON ' + enc.bytes + '바이트 (키 생략 ' + enc.savingsPct + '% · 링크 길이 ' + enc.linkSavingsPct + '% 감소)';
     $('#share-warn').hidden = !(enc.warn || enc.tooLong);
@@ -916,6 +1461,53 @@
     $('#s-role').value = state.signature.role || '';
     $('#s-date').value = state.signature.date || '';
     renderSwatches();
+    renderLogoField();
+  }
+
+  function renderLogoField() {
+    var thumb = $('#logo-thumb');
+    if (!thumb) return;
+    var sizeEl = $('#logo-size');
+    var stateEl = $('#logo-state');
+    var hintEl = $('#logo-hint');
+    var clearBtn = $('#btn-logo-clear');
+    var src = state.brand.logoImg;
+    clear(thumb);
+    if (src) {
+      var im = el('img');
+      im.src = src;
+      im.alt = state.brand.logo || 'logo';
+      thumb.appendChild(im);
+      thumb.classList.add('has-image');
+      if (sizeEl) sizeEl.textContent = kbOf(src.length);
+      if (stateEl) stateEl.textContent = L('업로드한 로고 사용 중');
+      if (hintEl) hintEl.textContent = L('삭제하면 로고 텍스트로 돌아갑니다. 브랜드를 바꾸면 새 로고로 다시 그립니다.');
+      if (clearBtn) clearBtn.disabled = false;
+    } else {
+      thumb.classList.remove('has-image');
+      thumb.textContent = (state.brand.logo || 'R').slice(0, 1);
+      if (sizeEl) sizeEl.textContent = L('없음');
+      if (stateEl) stateEl.textContent = L('로고 텍스트로 표시 중');
+      if (hintEl) hintEl.textContent = L('이미지를 끌어다 놓거나 파일을 고르세요. 큰 파일은 자동으로 줄여 저장합니다.');
+      if (clearBtn) clearBtn.disabled = true;
+    }
+  }
+
+  function applyLogoFile(file) {
+    if (!file) return;
+    if (!(/^image\//.test(file.type || '') || /\.(png|jpe?g|webp|svg)$/i.test(file.name || ''))) {
+      toast(L('PNG · JPG · WEBP · SVG 이미지만 올릴 수 있습니다.'), 'warn');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) { toast(L('파일이 너무 큽니다(8MB까지).'), 'warn'); return; }
+    toast(L('로고를 준비하는 중…'));
+    prepareImage(file, IMG.logo).then(function (res) {
+      if (!res.ok) { toast(imageErrorText(res), 'error'); return; }
+      state.brand.logoImg = res.src;
+      fillBrand();
+      onEdit();
+      toast(L('로고를 넣었습니다. 리포트 · PDF · 공유 링크에 함께 나갑니다.'));
+    });
   }
 
   function renderSwatches() {
@@ -941,7 +1533,14 @@
     clear(host);
     host.style.setProperty('--rc', state.brand.color || '#2f5bff');
     var head = el('div', 'bp-head');
-    head.appendChild(el('span', 'bp-mark', (state.brand.logo || 'R').slice(0, 1)));
+    if (state.brand.logoImg) {
+      var bpImg = el('img', 'bp-logo');
+      bpImg.src = state.brand.logoImg;
+      bpImg.alt = state.brand.logo || 'logo';
+      head.appendChild(bpImg);
+    } else {
+      head.appendChild(el('span', 'bp-mark', (state.brand.logo || 'R').slice(0, 1)));
+    }
     var name = el('div');
     name.appendChild(el('div', 'bp-name', state.brand.logo || '로고 텍스트'));
     name.appendChild(el('div', 'bp-sub', 'WORK REPORT'));
@@ -1002,6 +1601,38 @@
       toast('브랜드 정보를 기본값(가명)으로 되돌렸습니다.');
     });
     $('#btn-goto-preview').addEventListener('click', function () { setTab('client'); });
+
+    /* 로고 이미지 업로드 */
+    var pick = $('#btn-logo-pick');
+    var fileInput = $('#logo-file');
+    if (pick && fileInput) {
+      pick.addEventListener('click', function () { fileInput.value = ''; fileInput.click(); });
+      fileInput.addEventListener('change', function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (f) applyLogoFile(f);
+      });
+    }
+    var clearBtn = $('#btn-logo-clear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        if (!state.brand.logoImg) return;
+        state.brand.logoImg = '';
+        fillBrand();
+        onEdit();
+        toast(L('로고 이미지를 지웠습니다. 로고 텍스트로 표시됩니다.'));
+      });
+    }
+    var drop = $('#logo-drop');
+    if (drop) {
+      drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('is-drop'); });
+      drop.addEventListener('dragleave', function () { drop.classList.remove('is-drop'); });
+      drop.addEventListener('drop', function (e) {
+        e.preventDefault();
+        drop.classList.remove('is-drop');
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) applyLogoFile(f);
+      });
+    }
   }
 
   /* ── AI 브리지 ────────────────────────────────────────── */
@@ -1148,8 +1779,114 @@
       pro.sync(document);
       pro.onConnectChange(function () {
         try { pro.sync(document); } catch (e) { /* ignore */ }
+        updateProCheck();
       });
+      document.addEventListener('proconnector:change', function () { updateProCheck(); });
     } catch (e) { pro = null; }
+    updateProCheck();
+  }
+
+  function proVerifyState() {
+    try {
+      if (pro && typeof pro.verifyState === 'function') return pro.verifyState();
+      if (window.ProConnector && typeof window.ProConnector.verifyState === 'function') return window.ProConnector.verifyState();
+    } catch (e) { /* ignore */ }
+    return { state: 'none' };
+  }
+
+  function timeOf(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
+  function updateProCheck() {
+    var pill = $('#pro-check-pill');
+    var prov = $('#pro-check-provider');
+    var modelEl = $('#pro-check-model');
+    var msg = $('#pro-check-msg');
+    var timeEl = $('#pro-check-time');
+    var hintEl = $('#pro-check-hint');
+    if (!pill || !prov || !msg) return;
+    if (timeEl) { timeEl.textContent = ''; timeEl.hidden = true; }
+    if (hintEl) { hintEl.textContent = ''; hintEl.hidden = true; }
+
+    var st = { connected: false, providerName: '', model: '' };
+    try {
+      if (pro && typeof pro.state === 'function') st = pro.state();
+      else if (window.ProConnector && window.ProConnector.getState) st = window.ProConnector.getState();
+    } catch (e) { /* ignore */ }
+    var v = proVerifyState();
+
+    if (!st || !st.connected) {
+      pill.textContent = L('미검증');
+      pill.className = 'pill';
+      prov.textContent = L('무료 모드');
+      if (modelEl) modelEl.textContent = L('API 키를 연결하면 여기에 모델이 표시됩니다');
+      msg.textContent = L('아직 연결된 키가 없습니다. 무료 모드로도 리포트는 그대로 동작합니다.');
+      msg.className = 'pro-check-msg';
+      return;
+    }
+
+    prov.textContent = st.providerName || 'Pro';
+    if (modelEl) modelEl.textContent = st.model || '';
+
+    if (v.state === 'ok') {
+      pill.textContent = L('검증됨');
+      pill.className = 'pill is-ok';
+      msg.textContent = v.message || L('정상 작동 확인됨');
+      msg.className = 'pro-check-msg is-ok';
+      if (timeEl && v.at) { timeEl.textContent = L('마지막 확인') + ' ' + timeOf(v.at); timeEl.hidden = false; }
+    } else if (v.state === 'fail') {
+      pill.textContent = L('오류');
+      pill.className = 'pill is-error';
+      msg.textContent = v.message || L('마지막 확인에서 실패했습니다.');
+      msg.className = 'pro-check-msg is-error';
+      if (timeEl && v.at) { timeEl.textContent = L('마지막 확인') + ' ' + timeOf(v.at); timeEl.hidden = false; }
+      if (hintEl && v.hint) { hintEl.textContent = L(v.hint); hintEl.hidden = false; }
+    } else {
+      pill.textContent = L('미검증');
+      pill.className = 'pill is-warn';
+      msg.textContent = L('키는 저장됐지만 실제 응답을 아직 확인하지 않았습니다. 테스트를 눌러 주세요.');
+      msg.className = 'pro-check-msg';
+    }
+  }
+
+  function runProTest() {
+    var btn = $('#btn-pro-test');
+    var msg = $('#pro-check-msg');
+    var P = window.ProConnector;
+    if (!P || typeof P.verify !== 'function') {
+      toast(L('연결 엔진을 불러오지 못했습니다. 새로고침해 주세요.'), 'error');
+      return;
+    }
+    var st = {};
+    try { st = pro && typeof pro.state === 'function' ? pro.state() : P.getState(); } catch (e) { st = {}; }
+    if (!st || !st.connected) {
+      toast(L('먼저 API 키를 저장하세요. 설정 창을 엽니다.'), 'warn');
+      try { if (pro) pro.openConnect(); else P.openModal(); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.setAttribute('data-busy', '1'); }
+    if (msg) { msg.textContent = L('실제 요청을 보내 200 응답을 기다리는 중…'); msg.className = 'pro-check-msg is-busy'; }
+    var pillBefore = $('#pro-check-pill');
+    if (pillBefore) { pillBefore.textContent = L('확인 중'); pillBefore.className = 'pill is-warn'; }
+
+    P.verify().then(function (res) {
+      if (btn) { btn.disabled = false; btn.removeAttribute('data-busy'); }
+      updateProCheck();
+      if (res.ok) {
+        toast(isEn()
+          ? 'Connection verified (' + (res.model || '') + ')' + (res.latencyMs ? ' · ' + res.latencyMs + 'ms' : '')
+          : '정상 작동 확인됨 (' + (res.model || '') + ')' + (res.latencyMs ? ' · ' + res.latencyMs + 'ms' : ''));
+      } else {
+        toast((res.message || L('연결에 실패했습니다.')) + (!isEn() && res.detail ? ' — ' + res.detail : ''), 'error');
+      }
+    }, function () {
+      if (btn) { btn.disabled = false; btn.removeAttribute('data-busy'); }
+      updateProCheck();
+      toast(L('연결 확인 중 오류가 났습니다.'), 'error');
+    });
   }
 
   function runPro() {
@@ -1438,6 +2175,29 @@
     $('#btn-print').addEventListener('click', doPrint);
     $('#btn-print-rail').addEventListener('click', doPrint);
     $('#btn-client-print').addEventListener('click', doPrint);
+
+    /* API 연결 테스트 */
+    var testBtn = $('#btn-pro-test');
+    if (testBtn) testBtn.addEventListener('click', runProTest);
+    var settingsBtn = $('#btn-pro-settings');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', function () {
+        try {
+          if (pro) pro.openConnect();
+          else if (window.ProConnector) window.ProConnector.openModal();
+        } catch (e) { /* ignore */ }
+      });
+    }
+    updateProCheck();
+
+    /* 언어 전환 — SVG 차트 안의 글자는 i18n 이 건너뛰므로 직접 다시 그린다 */
+    document.addEventListener('onetap:lang', function () {
+      if (!state) return;
+      renderItems();
+      updateDerived();
+      fillBrand();
+      updateProCheck();
+    });
 
     window.addEventListener('beforeprint', function () {
       if (state) renderReport(state, $('#print-root'), { mode: 'print' });

@@ -494,6 +494,12 @@
       writeRaw('localStorage', null);
     }
     var state = publicState(cfg);
+    /* 키·모델이 바뀌면 이전 검증 결과는 의미가 없다 */
+    var prev = loadVerify();
+    if (prev) {
+      var nextModel = (cfg.models && cfg.models.text) || defaultModel(cfg.provider, 'text');
+      if (prev.provider !== cfg.provider || prev.model !== nextModel) clearVerify();
+    }
     emitChange(state);
     var res = { ok: true, errors: [], state: state, persisted: persisted };
     if (!persisted) {
@@ -505,6 +511,7 @@
   function clearConfig() {
     writeRaw('sessionStorage', null);
     writeRaw('localStorage', null);
+    clearVerify();
     var state = publicState(null);
     emitChange(state);
     return { ok: true, state: state };
@@ -1170,44 +1177,209 @@
    * testConnection(formOrOpts)
    * 저장하지 않고 현재 입력값으로 짧은 텍스트 요청을 보낸다.
    * { config } 또는 { provider, apiKey, endpointUrl, bearerToken, model } 또는 빈 값(저장된 설정).
+   * 실제 HTTP 상태를 확인하는 verify() 에 위임한다(구버전 호출 호환).
    */
   function testConnection(arg) {
+    return verify(arg).then(function (res) {
+      res.reason = res.code;
+      return res;
+    });
+  }
+
+  /* ── 연결 검증 ──────────────────────────────────────────
+     실제 제공자에 최소 요청(1토큰)을 보내고 HTTP 상태를 본다.
+     2xx 만 검증됨. 실패는 코드로 나눠 문장을 따로 만든다(화면·모달 공통).
+     결과는 sessionStorage 에 남겨 새로고침 뒤에도 배지에 보인다. */
+
+  var VERIFY_KEY = 'powr:v1:pro:verify';
+  var verifyMemo = null;
+  var verifyLoaded = false;
+
+  function loadVerify() {
+    if (verifyLoaded) return verifyMemo;
+    verifyLoaded = true;
+    var s = storageOf('sessionStorage');
+    if (!s) return null;
+    var raw = null;
+    try { raw = s.getItem(VERIFY_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    try {
+      var o = JSON.parse(raw);
+      verifyMemo = o && typeof o === 'object' ? o : null;
+    } catch (e) { verifyMemo = null; }
+    return verifyMemo;
+  }
+
+  function saveVerify(v) {
+    verifyMemo = v;
+    verifyLoaded = true;
+    var s = storageOf('sessionStorage');
+    if (!s) return false;
+    try {
+      if (v) s.setItem(VERIFY_KEY, JSON.stringify(v));
+      else s.removeItem(VERIFY_KEY);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function clearVerify() { saveVerify(null); }
+
+  /** 현재 저장된 설정에 대한 검증 기록만 돌려준다(설정·모델이 바뀌면 무효). */
+  function getVerify() {
+    var v = loadVerify();
+    if (!v) return null;
+    var cfg = loadConfig();
+    if (!isConnectedConfig(cfg)) return null;
+    if (v.provider !== cfg.provider) return null;
+    var model = (cfg.models && cfg.models.text) || defaultModel(cfg.provider, 'text');
+    if (v.model && model && v.model !== model) return null;
+    return v;
+  }
+
+  function verifyState() {
+    var s = getState();
+    var v = getVerify();
+    if (!s.connected) return { state: 'none' };
+    if (!v) return { state: 'unverified' };
+    return { state: v.ok ? 'ok' : 'fail', at: v.at, message: v.message, status: v.status || 0, model: v.model || '', hint: v.hint || '' };
+  }
+
+  function verifyFail(code, status, detail, hint) {
+    var msg;
+    if (code === 'not_connected') msg = '연결된 키가 없습니다. 먼저 API 키를 저장하세요.';
+    else if (code === 'bad_key') msg = '키가 비어 있거나 너무 짧습니다.';
+    else if (code === 'bad_request') msg = '요청이 거부되었습니다 (HTTP ' + status + '). 키 형식이나 모델 이름을 확인해 주세요.';
+    else if (code === 'key') msg = '키가 거부되었습니다 (HTTP ' + status + '). 키를 다시 확인하거나 새로 발급해 주세요.';
+    else if (code === 'model') msg = '모델을 찾을 수 없습니다 (HTTP ' + status + '). 모델 이름을 확인해 주세요.';
+    else if (code === 'quota') msg = '한도를 초과했습니다 (HTTP ' + status + '). 잠시 후 다시 시도하거나 결제·쿼터를 확인하세요.';
+    else if (code === 'server') msg = '제공자 서버 오류입니다 (HTTP ' + status + '). 잠시 후 다시 시도해 주세요.';
+    else if (code === 'timeout') msg = '응답이 없습니다(' + status + '초 초과). 네트워크를 확인하고 다시 시도하세요.';
+    else if (code === 'network') msg = '네트워크에서 막혔습니다. 인터넷·방화벽·CORS를 확인하세요.';
+    else if (code === 'bad_response') msg = '응답을 해석하지 못했습니다. 모델·서버 응답 형식을 확인하세요.';
+    else msg = '연결에 실패했습니다 (HTTP ' + status + ').';
+    return { ok: false, code: code, status: status || 0, message: msg, detail: detail || '', hint: hint || '' };
+  }
+
+  /* 브라우저에서 직접 부를 때 제공자별 현실 — OpenAI 는 CORS 헤더를 주지 않는다.
+     키가 맞아도 “Failed to fetch”가 나므로 키 탓으로 오해하지 않게 따로 알려 준다. */
+  var BROWSER_CORS_HINT = {
+    openai: 'OpenAI는 브라우저에서 직접 호출하면 CORS로 막힙니다. 키가 맞아도 이 화면에서는 실패할 수 있으니 Google Gemini 키를 쓰거나 자체 API 서버(프록시)를 연결하세요.'
+  };
+
+  function codeForStatus(status) {
+    if (status === 400) return 'bad_request';
+    if (status === 401 || status === 403) return 'key';
+    if (status === 404) return 'model';
+    if (status === 429) return 'quota';
+    if (status >= 500 && status <= 599) return 'server';
+    return 'http';
+  }
+
+  /**
+   * verify(arg) → Promise<{ ok, code, status, message, detail, provider, providerName, model, latencyMs, sample }>
+   * - 저장된 설정(인자 없음)이면 결과를 sessionStorage 에 남기고 배지를 갱신한다.
+   * - 모달의 입력값처럼 아직 저장 전인 설정은 결과만 돌려준다.
+   */
+  function verify(arg) {
     var o = arg || {};
     var cfg;
+    var saveResult = false;
     if (o.config) cfg = normalizeConfigInput(o.config);
     else if (o.provider || o.apiKey || o.endpointUrl) cfg = normalizeConfigInput(o);
-    else cfg = loadConfig();
+    else { cfg = loadConfig(); saveResult = true; }
 
     if (!isConnectedConfig(cfg)) {
-      return Promise.resolve({
-        ok: false, reason: 'not_connected', message: '연결 정보가 비어 있습니다. 키와 서버 주소를 확인하세요.'
-      });
+      return Promise.resolve(verifyFail('not_connected', 0));
     }
     var p = providerById(cfg.provider);
-    if (p.id !== 'custom' && !trim(cfg.apiKey) && !(cfg.remember && cfg.apiKey)) {
-      return Promise.resolve({ ok: false, reason: 'not_connected', message: p.keyLabel + '가 비어 있습니다.' });
+    if (p.id !== 'custom' && trim(cfg.apiKey).length < 8) {
+      return Promise.resolve(verifyFail('bad_key', 0));
     }
+    var model = (cfg.models && cfg.models.text) || defaultModel(p.id, 'text');
+    var plan = null;
+    try {
+      plan = buildRequest(p.id, 'text', { prompt: 'ping', options: { maxTokens: 1, temperature: 0 } }, cfg);
+    } catch (e) { plan = null; }
+    if (!plan) return Promise.resolve(verifyFail('bad_request', 0));
 
-    return generate({
-      task: 'text',
-      prompt: '연결 확인입니다. 다른 설명 없이 “연결됨”이라고만 답하세요.',
-      system: '너는 API 연결 상태를 확인하는 도우미다. 한 단어로만 답한다.',
-      options: { maxTokens: 16, temperature: 0 }
-    }, { config: cfg, timeoutMs: o.timeoutMs || 25000, transport: o.transport, noAbort: true })
-      .then(function (res) {
-        if (res.ok) {
-          return {
-            ok: true, provider: p.id, providerName: p.name, model: res.model,
-            latencyMs: res.latencyMs, sample: truncate(trim(res.text || ''), 40),
-            message: p.name + ' 연결에 성공했습니다.' + (res.latencyMs ? ' (' + res.latencyMs + 'ms)' : '')
-          };
+    var timeoutMs = numberOr(o.timeoutMs, 20000);
+    var transport = typeof o.transport === 'function' ? o.transport : (customTransport || defaultTransport);
+    var t0 = now();
+
+    return new Promise(function (resolve) {
+      var settled = false, timer = null, controller = null;
+
+      function finish(out) {
+        if (settled) return;
+        settled = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        out.latencyMs = Math.max(0, now() - t0);
+        out.provider = p.id;
+        out.providerName = p.name;
+        out.model = model;
+        out.reason = out.code;
+        if (out.message) out.message = redact(out.message, [cfg.apiKey, cfg.bearerToken]);
+        if (out.detail) out.detail = redact(out.detail, [cfg.apiKey, cfg.bearerToken]);
+        if (out.hint) out.hint = redact(out.hint, [cfg.apiKey, cfg.bearerToken]);
+        if (saveResult) {
+          saveVerify({
+            provider: p.id, model: model, ok: !!out.ok, status: out.status || 0,
+            code: out.code || '', message: out.message, at: new Date().toISOString(),
+            latencyMs: out.latencyMs || 0, hint: out.hint || ''
+          });
+          emitChange(getState());
         }
-        return {
-          ok: false, provider: p.id, providerName: p.name, reason: res.reason,
-          status: res.status || 0, latencyMs: res.latencyMs || 0,
-          message: res.message || '연결에 실패했습니다.'
-        };
+        resolve(out);
+      }
+
+      if (typeof root.AbortController === 'function') {
+        try { controller = new root.AbortController(); plan.init.signal = controller.signal; } catch (e) { controller = null; }
+      }
+      timer = setTimeout(function () {
+        if (controller) { try { controller.abort(); } catch (e) { /* ignore */ } }
+        finish(verifyFail('timeout', Math.round(timeoutMs / 1000)));
+      }, timeoutMs);
+
+      var pending;
+      try { pending = transport(plan); } catch (e) {
+        finish(verifyFail('network', 0, (e && e.message) || '', BROWSER_CORS_HINT[p.id]));
+        return;
+      }
+
+      Promise.resolve(pending).then(function (res) {
+        var status = res && typeof res.status === 'number' ? res.status : 200;
+        var okFlag = res && res.ok === false ? false : (status >= 200 && status < 300);
+        if (!okFlag) {
+          readText(res).then(function (body) {
+            var json = null;
+            try { json = JSON.parse(body); } catch (e) { json = null; }
+            var detail = errorMessageFrom(json) || truncate(trim(body), 160);
+            var code = codeForStatus(status);
+            finish(verifyFail(code, status, detail));
+          }, function () {
+            finish(verifyFail(codeForStatus(status), status));
+          });
+          return;
+        }
+        /* 2xx — 본문을 읽어 모델이 답했는지 확인(본문이 비어도 200이면 성공으로 본다) */
+        readText(res).then(function (body) {
+          var json = null;
+          try { json = JSON.parse(body); } catch (e) { json = null; }
+          var parsed = json ? parseJson(p.id, 'text', json) : null;
+          var sample = parsed && parsed.ok ? truncate(trim(parsed.text || ''), 30) : '';
+          finish({
+            ok: true, code: 'ok', status: status, sample: sample,
+            message: '정상 작동 확인됨 (' + (model || p.name) + ')'
+          });
+        }, function () {
+          finish({ ok: true, code: 'ok', status: status, message: '정상 작동 확인됨 (' + (model || p.name) + ')' });
+        });
+      }, function (err) {
+        var msg = err && err.message ? err.message : '';
+        if (/abort/i.test(msg)) { finish(verifyFail('timeout', Math.round(timeoutMs / 1000))); return; }
+        finish(verifyFail('network', 0, msg ? truncate(msg, 160) : '', BROWSER_CORS_HINT[p.id]));
       });
+    });
   }
 
   /* ==========================================================
@@ -1530,7 +1702,19 @@
     '@media (prefers-color-scheme: dark){.pc-status[data-kind="err"]{color:#ff8a7a;}}',
     '.pc-legal{margin:14px 0 0;padding-top:11px;border-top:1px solid var(--pc-line);font-size:11.5px;color:var(--pc-muted);}',
     '.pc-legal-line{margin:5px 0 0;line-height:1.6;}',
+    '.pc-verify{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:2px 6px;border-radius:999px;background:rgba(128,128,128,.16);color:var(--pc-muted);white-space:nowrap;}',
+    '.proconn-badge[data-verify="ok"] .pc-verify{background:color-mix(in srgb, var(--pc-good) 16%, transparent);color:var(--pc-good);}',
+    '.proconn-badge[data-verify="fail"] .pc-verify{background:rgba(192,57,43,.14);color:#c0392b;}',
+    '.proconn-badge[data-verify="fail"] .pc-dot{background:#c0392b;box-shadow:0 0 0 3px rgba(192,57,43,.18);}',
+    '.proconn-badge[data-verify="unverified"] .pc-dot{background:#c98a12;box-shadow:0 0 0 3px rgba(201,138,18,.18);}',
+    '.pc-verifyline{margin:0 0 12px;padding:9px 11px;border-radius:9px;border:1px solid var(--pc-line);background:var(--pc-raised);font-size:12.5px;line-height:1.55;}',
+    '.pc-verifyline b{font-weight:700;}',
+    '.pc-verifyline[data-verify="ok"]{border-color:color-mix(in srgb, var(--pc-good) 45%, var(--pc-line));}',
+    '.pc-verifyline[data-verify="fail"]{border-color:rgba(192,57,43,.45);}',
+    '.pc-verifyline small{display:block;margin-top:3px;color:var(--pc-muted);font-size:11.5px;}',
+    '.pc-verifytext{display:inline;margin-left:6px;}',
     '.pc-hint{font-size:11.5px;color:var(--pc-muted);word-break:break-all;}',
+    '.pc-hintline{margin:6px 0 0;line-height:1.55;color:var(--pc-muted);font-size:12px;}',
     '@media (max-width:520px){',
     '  .pc-overlay{padding:0;align-items:flex-end;}',
     '  .pc-panel{max-height:94dvh;border-radius:16px 16px 0 0;border-bottom:none;}',
@@ -1590,18 +1774,22 @@
   function paintBadge(node, state) {
     if (!node) return;
     var s = state || getState();
+    var v = s.connected ? verifyState() : { state: 'none' };
+    var verifyText = v.state === 'ok' ? '검증됨' : (v.state === 'fail' ? '오류' : '미검증');
     node.setAttribute('data-mode', s.mode);
+    node.setAttribute('data-verify', s.connected ? v.state : 'none');
     node.setAttribute('title', s.connected
-      ? s.providerName + ' 연결됨 · 클릭해서 관리'
+      ? s.providerName + ' 연결됨 · ' + verifyText + ' · 클릭해서 테스트/관리'
       : '무료 모드 · 클릭해서 유료 API 연결');
     node.setAttribute('aria-label', s.connected
-      ? 'Pro 연결됨: ' + s.providerName + '. 설정 열기'
+      ? 'Pro 연결됨: ' + s.providerName + ' · ' + verifyText + '. 설정과 연결 테스트 열기'
       : '무료 모드. Pro API 연결 설정 열기');
     clearNode(node);
     node.appendChild(el('span', { class: 'pc-dot', 'aria-hidden': 'true' }));
     node.appendChild(el('span', { class: 'pc-label', text: s.connected ? 'Pro 연결됨' : '무료 모드' }));
     if (s.connected) {
       node.appendChild(el('span', { class: 'pc-sub', text: '· ' + s.badgeLabel }));
+      node.appendChild(el('span', { class: 'pc-verify', text: verifyText }));
     } else {
       node.appendChild(el('span', { class: 'pc-sub', text: '· API 연결' }));
     }
@@ -1667,6 +1855,8 @@
     });
 
     var status = el('p', { class: 'pc-status', role: 'status', 'aria-live': 'polite' });
+    var hintLine = el('p', { class: 'pc-hint pc-hintline' });
+    hintLine.hidden = true;
     var keyInputs = {};
     var modelSelects = {};
     var panels = {};
@@ -1758,6 +1948,37 @@
     ]));
 
     var body = el('div', { class: 'pc-body' });
+
+    /* 검증 상태 줄 — 열 때마다·테스트 뒤마다 갱신 */
+    var verifyLine = el('p', { class: 'pc-verifyline', 'data-verify': 'none', role: 'status', 'aria-live': 'polite' });
+    function paintVerify() {
+      var s = getState();
+      var v = verifyState();
+      clearNode(verifyLine);
+      verifyLine.setAttribute('data-verify', s.connected ? v.state : 'none');
+      if (!s.connected) {
+        verifyLine.appendChild(el('b', { text: '미검증' }));
+        verifyLine.appendChild(el('span', { class: 'pc-verifytext', text: '무료 모드입니다. 키를 저장한 뒤 [연결 테스트]를 누르면 실제 응답으로 확인합니다.' }));
+        return;
+      }
+      if (v.state === 'ok') {
+        verifyLine.appendChild(el('b', { text: '검증됨' }));
+        verifyLine.appendChild(el('span', { class: 'pc-verifytext', text: v.message || '정상 작동 확인됨' }));
+      } else if (v.state === 'fail') {
+        verifyLine.appendChild(el('b', { text: '오류' }));
+        verifyLine.appendChild(el('span', { class: 'pc-verifytext', text: v.message || '마지막 확인에서 실패했습니다.' }));
+      } else {
+        verifyLine.appendChild(el('b', { text: '미검증' }));
+        verifyLine.appendChild(el('span', { class: 'pc-verifytext', text: '키는 저장됐지만 아직 실제 응답을 확인하지 않았습니다. [연결 테스트]를 눌러 주세요.' }));
+      }
+      if (v.at) {
+        var d = new Date(v.at);
+        if (!isNaN(d.getTime())) {
+          verifyLine.appendChild(el('small', { text: '마지막 확인 ' + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes() }));
+        }
+      }
+    }
+    body.appendChild(verifyLine);
 
     /* 탭 */
     var tabWrap = el('div', { class: 'pc-tabs', role: 'tablist', 'aria-label': 'API 프로바이더' });
@@ -1906,6 +2127,7 @@
     var clearBtn = el('button', { type: 'button', class: 'pc-btn pc-btn-danger', text: '연결 해제 및 키 삭제' });
     body.appendChild(el('div', { class: 'pc-actions' }, [testBtn, saveBtn, clearBtn]));
     body.appendChild(status);
+    body.appendChild(hintLine);
 
     /* 고지 */
     body.appendChild(el('div', { class: 'pc-legal' }, [
@@ -1976,10 +2198,14 @@
       var form = currentForm();
       setStatus('연결을 확인하는 중…', '');
       testBtn.disabled = true;
-      testConnection(form).then(function (res) {
+      verify(form).then(function (res) {
         testBtn.disabled = false;
-        if (res.ok) setStatus(res.message, 'ok');
+        if (res.ok) setStatus(res.message + (res.latencyMs ? ' · ' + res.latencyMs + 'ms' : ''), 'ok');
         else setStatus(res.message, 'err');
+        status.setAttribute('title', res.detail || '');
+        hintLine.textContent = res.hint || '';
+        hintLine.hidden = !res.hint;
+        paintVerify();
       }, function () {
         testBtn.disabled = false;
         setStatus('연결 확인 중 오류가 났습니다.', 'err');
@@ -2002,7 +2228,8 @@
         tokenInput.value = '';
         if (form.bearerToken) tokenInput.placeholder = '저장된 토큰 사용 중 (' + maskKey(form.bearerToken) + ')';
       }
-      setStatus('저장했습니다. ' + res.state.providerName + ' 로 연결됐습니다.' + (res.warning ? ' ' + res.warning : ''), 'ok');
+      setStatus('저장했습니다. ' + res.state.providerName + ' 로 연결됐습니다. [연결 테스트]로 실제 응답을 확인하세요.' + (res.warning ? ' ' + res.warning : ''), 'ok');
+      paintVerify();
       // 모달은 닫지 않는다 — 사용자가 테스트하거나 바로 쓸 수 있게.
     });
 
@@ -2016,6 +2243,7 @@
       if (endpointInput) { endpointInput.value = ''; tokenInput.value = ''; tokenInput.placeholder = providerById('custom').keyPlaceholder; customModelInput.value = ''; }
       rememberInput.checked = false;
       setStatus('키를 삭제했습니다. 무료 모드로 돌아갑니다.', 'ok');
+      paintVerify();
     });
 
     doc.body.appendChild(overlay);
@@ -2024,12 +2252,14 @@
       overlay: overlay, panel: panel, open: false, saved: loadConfig(),
       prevOverflow: '',
       close: close,
-      refresh: function () { modal.saved = loadConfig(); applyState(); paintBadge(doc.querySelector('.proconn-badge')); },
-      setStatus: setStatus
+      refresh: function () { modal.saved = loadConfig(); applyState(); paintVerify(); paintBadge(doc.querySelector('.proconn-badge')); },
+      setStatus: setStatus,
+      paintVerify: paintVerify
     };
 
     selectProvider(activeProvider, false);
     applyState();
+    paintVerify();
     return modal;
   }
 
@@ -2117,6 +2347,10 @@
     generateImage: generateImage,
     generateTTS: generateTTS,
     testConnection: testConnection,
+    verify: verify,
+    getVerify: getVerify,
+    verifyState: verifyState,
+    clearVerify: clearVerify,
     buildRequest: buildRequest,
     parseJson: parseJson,
     parseResponse: parseJson,

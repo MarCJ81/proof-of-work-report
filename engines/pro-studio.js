@@ -244,6 +244,18 @@
       badge: badge,
       sync: sync,
       describe: describe,
+      verify: function (arg) {
+        try {
+          if (engine && typeof engine.verify === 'function') return engine.verify(arg);
+        } catch (e) { /* ignore */ }
+        return Promise.resolve({ ok: false, code: 'engine_missing', message: 'Pro 연결 엔진을 불러오지 못했습니다. 새로고침해 주세요.' });
+      },
+      verifyState: function () {
+        try {
+          if (engine && typeof engine.verifyState === 'function') return engine.verifyState();
+        } catch (e) { /* ignore */ }
+        return { state: 'none' };
+      },
       openConnect: function () {
         try { if (engine && typeof engine.openModal === 'function') return engine.openModal(); } catch (e) { /* ignore */ }
         return null;

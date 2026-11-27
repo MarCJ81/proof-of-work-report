@@ -34,6 +34,9 @@
   var HISTORY_KEY = 'powr:v1:history';
   var DRAFT_KEY = 'powr:v1:draft';
   var HISTORY_LIMIT = 20;
+  var MAX_SHOTS = 3;            /* 항목당 증빙 캡처 */
+  var MAX_LOGO_CHARS = 160000;  /* 로고 data URL 상한(≈120KB) — 공유 링크에 담기므로 작게 */
+  var MAX_SHOT_CHARS = 260000;  /* 캡처 1장 data URL 상한(≈195KB, 압축 후) */
 
   var STATUS_ORDER = ['done', 'doing', 'next', 'block'];
   var STATUS_META = {
@@ -61,8 +64,35 @@
     owner: '김민수',
     role: '퍼포먼스 마케터',
     email: 'contact@example.com',
-    phone: ''
+    phone: '',
+    logoImg: ''
   };
+
+  /* 업로드 이미지는 이 앱이 캔버스로 다시 그린 래스터(PNG/JPEG/WEBP)만 받는다.
+     SVG 를 그대로 두면 공유 링크·붙여넣기 JSON 을 통해 스크립트가 들어올 수 있어
+     상태에는 벡터 원본을 저장하지 않는다(화면에서는 항상 <img> 로만 그린다). */
+  var IMG_DATA_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
+  function safeImage(v, maxChars) {
+    var t = trim(v);
+    if (!t) return '';
+    if (t.length > (maxChars || MAX_SHOT_CHARS)) return '';
+    if (!IMG_DATA_RE.test(t)) return '';
+    return t;
+  }
+
+  function normalizeShots(list) {
+    var out = [];
+    if (!Array.isArray(list)) return out;
+    for (var i = 0; i < list.length && out.length < MAX_SHOTS; i++) {
+      var raw = list[i];
+      var src = raw && typeof raw === 'object' ? raw.src : raw;
+      var s = safeImage(src, MAX_SHOT_CHARS);
+      if (!s || contains(out, s)) continue;
+      out.push(s);
+    }
+    return out;
+  }
 
   /* ── 기본 유틸 ─────────────────────────────────────────── */
 
@@ -204,17 +234,19 @@
       owner: cut(b.owner, 40) || DEFAULT_BRAND.owner,
       role: cut(b.role, 40),
       email: cut(b.email, 80),
-      phone: cut(b.phone, 30)
+      phone: cut(b.phone, 30),
+      logoImg: safeImage(b.logoImg, MAX_LOGO_CHARS)
     };
   }
 
   function normalizeItem(raw, i, fallbackStatus) {
     var o = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     if (Array.isArray(raw)) {
-      /* 배열 압축 형식: [title, hours, evidence, memo, category, code, ask] */
+      /* 배열 압축 형식: [title, hours, evidence, memo, category, code, ask, shots?] */
       o = {
         title: raw[0], hours: raw[1], evidence: raw[2], memo: raw[3],
-        category: raw[4], status: CODE_TO_STATUS[str(raw[5])] || '', ask: raw[6]
+        category: raw[4], status: CODE_TO_STATUS[str(raw[5])] || '', ask: raw[6],
+        shots: raw[7]
       };
     }
     var status = contains(STATUS_ORDER, o.status) ? o.status : (fallbackStatus || 'done');
@@ -230,7 +262,8 @@
       memo: cut(o.memo, 600),
       ask: cut(o.ask, 240),
       category: cat,
-      status: status
+      status: status,
+      shots: normalizeShots(o.shots)
     };
   }
 
@@ -239,8 +272,8 @@
     if (!Array.isArray(list)) return out;
     for (var i = 0; i < list.length && out.length < (max || MAX_ITEMS); i++) {
       var it = normalizeItem(list[i], i);
-      /* 완전히 빈 항목은 버린다(빈 줄이 리포트에 남지 않게). */
-      if (!it.title && !it.memo && !it.evidence && !it.hours) continue;
+      /* 완전히 빈 항목은 버린다(빈 줄이 리포트에 남지 않게). 캡처만 있어도 증빙이라 남긴다. */
+      if (!it.title && !it.memo && !it.evidence && !it.hours && !(it.shots && it.shots.length)) continue;
       out.push(it);
     }
     return out;
@@ -467,11 +500,14 @@
       s: s.start,
       e: s.end,
       m: s.summary,
-      b: [s.brand.logo, s.brand.company, s.brand.color, s.brand.owner, s.brand.role, s.brand.email, s.brand.phone],
+      b: [s.brand.logo, s.brand.company, s.brand.color, s.brand.owner, s.brand.role, s.brand.email, s.brand.phone, s.brand.logoImg],
       g: [s.signature.name, s.signature.role, s.signature.date],
       h: s.compare.prevHours === null ? 0 : s.compare.prevHours,
       i: s.items.map(function (it) {
-        return [it.title, it.hours, it.evidence, it.memo, it.category, STATUS_META[it.status].code, it.ask];
+        var row = [it.title, it.hours, it.evidence, it.memo, it.category, STATUS_META[it.status].code, it.ask];
+        /* 캡처가 없으면 배열을 7칸으로 유지해 링크 길이를 아낀다 */
+        if (it.shots && it.shots.length) row.push(it.shots);
+        return row;
       })
     };
   }
@@ -485,13 +521,14 @@
       if (!Array.isArray(row)) return row;
       return {
         title: row[0], hours: row[1], evidence: row[2], memo: row[3],
-        category: row[4], status: CODE_TO_STATUS[str(row[5])] || '', ask: row[6]
+        category: row[4], status: CODE_TO_STATUS[str(row[5])] || '', ask: row[6],
+        shots: row[7]
       };
     });
     return normalizeState({
       project: packed.p, client: packed.c, start: packed.s, end: packed.e,
       summary: packed.m,
-      brand: { logo: b[0], company: b[1], color: b[2], owner: b[3], role: b[4], email: b[5], phone: b[6] },
+      brand: { logo: b[0], company: b[1], color: b[2], owner: b[3], role: b[4], email: b[5], phone: b[6], logoImg: b[7] },
       signature: { name: g[0], role: g[1], date: g[2] },
       compare: { prevHours: num(packed.h) > 0 ? num(packed.h) : null },
       items: items
@@ -631,6 +668,38 @@
     return enc;
   }
 
+  /* ── 업로드 이미지 도우미 ────────────────────────────── */
+
+  function shotCount(state) {
+    var s = state && typeof state === 'object' ? state : {};
+    var list = Array.isArray(s.items) ? s.items : [];
+    var n = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (list && list[i] && Array.isArray(list[i].shots)) n += list[i].shots.length;
+    }
+    return n;
+  }
+
+  /** 상태에 들어 있는 이미지 data URL 의 문자 수 합(저장·링크 용량 확인용) */
+  function imageChars(state) {
+    var s = state && typeof state === 'object' ? state : {};
+    var n = 0;
+    if (s.brand && typeof s.brand.logoImg === 'string') n += s.brand.logoImg.length;
+    var list = Array.isArray(s.items) ? s.items : [];
+    for (var i = 0; i < list.length; i++) {
+      var shots = list[i] && Array.isArray(list[i].shots) ? list[i].shots : [];
+      for (var j = 0; j < shots.length; j++) n += String(shots[j] || '').length;
+    }
+    return n;
+  }
+
+  /** 공유 링크가 너무 길 때 캡처만 빼고 다시 만드는 용도 */
+  function stripShots(state) {
+    var s = normalizeState(state);
+    s.items.forEach(function (it) { it.shots = []; });
+    return s;
+  }
+
   /* ── 집계 ─────────────────────────────────────────────── */
 
   function hoursOf(items) {
@@ -701,7 +770,8 @@
       topCategory: categories.length ? categories[0] : null,
       prevHours: prev,
       deltaPct: deltaPct,
-      itemCount: items.length
+      itemCount: items.length,
+      shotCount: shotCount(s)
     };
   }
 
@@ -1129,6 +1199,13 @@
     var stamp = now instanceof Date ? now.toISOString() : (typeof now === 'string' && now ? now : new Date().toISOString());
     s.updatedAt = stamp;
     var list = historyList(storage);
+    /* 이력에는 캡처 이미지를 쌓지 않는다(로컬 저장소 5MB 보호).
+       가장 최근 1건만 이미지를 품고, 오래된 이력에서는 걷어낸다.
+       초안(draft)에는 항상 전부 남으므로 지금 작업 중인 화면은 그대로다. */
+    list.forEach(function (e) {
+      if (!e || !e.state || !Array.isArray(e.state.items)) return;
+      e.state.items.forEach(function (it) { if (it) it.shots = []; });
+    });
     var entry = {
       id: s.id,
       project: s.project,
@@ -1234,6 +1311,14 @@
     hasCompressor: function () { return !!pakoLib(); },
     WARN_CODE: WARN_CODE,
     MAX_ITEMS: MAX_ITEMS,
+    MAX_SHOTS: MAX_SHOTS,
+    MAX_LOGO_CHARS: MAX_LOGO_CHARS,
+    MAX_SHOT_CHARS: MAX_SHOT_CHARS,
+    normalizeShots: normalizeShots,
+    safeImage: safeImage,
+    shotCount: shotCount,
+    imageChars: imageChars,
+    stripShots: stripShots,
     STATUS_ORDER: STATUS_ORDER,
     STATUS_META: STATUS_META,
     CATEGORIES: CATEGORIES,
