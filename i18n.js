@@ -279,9 +279,24 @@
   }
 
   /* ---------- apply / restore ---------- */
+  function trFieldValues() {
+    var list = doc.querySelectorAll('input, textarea');
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      var ty = (el.type || 'text').toLowerCase();
+      if (ty === 'checkbox' || ty === 'radio' || ty === 'hidden' || ty === 'file' || ty === 'date' || ty === 'number') continue;
+      if (el === doc.activeElement) continue;
+      var v = el.value;
+      if (!v || !HANGUL.test(v)) continue;
+      var out = tr(v);
+      if (out !== v) { records.push({ e: el, a: 'prop:value', v: v }); el.value = out; }
+    }
+  }
+
   function applyEn() {
     var title = root.__onetapTitle || (root.__onetapTitle = doc.title);
     walk(doc.body);
+    trFieldValues();
     trMeta();
     trJsonLd();
     doc.documentElement.lang = 'en';
@@ -294,7 +309,7 @@
       var r = records[i];
       if (r.n) { if (r.n.nodeValue !== r.v) r.n.nodeValue = r.v; }
       else if (r.e) {
-        if (r.a === 'value') { if (r.e.value !== r.v) r.e.value = r.v; }
+        if (r.a === 'value' || r.a === 'prop:value') { if (r.e.value !== r.v) r.e.value = r.v; }
         else if (r.e.getAttribute(r.a) !== r.v) r.e.setAttribute(r.a, r.v);
       }
     }
